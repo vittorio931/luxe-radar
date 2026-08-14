@@ -53,36 +53,6 @@
       "notes": "Connecteur dédié existant conservé."
     },
     {
-      "name": "Cdiscount",
-      "display_name": "Cdiscount",
-      "base_url": "https://www.cdiscount.com",
-      "category": "Mode multimarques / marketplace",
-      "status": "active",
-      "enabled": true,
-      "connector_type": "dedicated",
-      "currency": "EUR",
-      "country": "FR",
-      "capabilities": {
-        "search": true,
-        "price": true,
-        "image": true,
-        "reference": false
-      },
-      "url": "https://www.cdiscount.com",
-      "domain": "cdiscount.com",
-      "supports_search": true,
-      "supports_price": true,
-      "supports_image": true,
-      "supports_reference": false,
-      "notes": "Connecteur dédié public : pages Cdiscount publiques, JSON-LD + HTML, sans contournement de contrôle d'accès.",
-      "verification": {
-        "source": "https://www.cdiscount.com/chaussures/r-nike%2Btrail.html",
-        "source_verified": true,
-        "query": "Nike Trail",
-        "http_status": 200
-      }
-    },
-    {
       "name": "Grailed",
       "display_name": "Grailed",
       "base_url": "https://grailed.com",
@@ -4908,27 +4878,25 @@
       "category": "Grossistes mode",
       "country": "CN",
       "currency": "CNY",
-      "notes": "Connecteur dédié expérimental sur la recherche web publique s.1688.com. Variantes chinoises pour types de produits, conversion CNY->EUR, arrêt propre si vérification/connexion. Aucun contournement de contrôle d’accès.",
+      "notes": "Connecteur dédié désactivé et non validé pour une recherche conforme.",
       "base_url": "https://www.1688.com",
       "domain": "1688.com",
-      "enabled": true,
-      "status": "active",
+      "enabled": false,
+      "status": "off",
       "connector_type": "dedicated",
-      "supports_search": true,
-      "supports_price": true,
-      "supports_image": true,
+      "supports_search": false,
+      "supports_price": false,
+      "supports_image": false,
       "supports_reference": false,
       "capabilities": {
-        "search": true,
-        "price": true,
-        "image": true,
+        "search": false,
+        "price": false,
+        "image": false,
         "reference": false
       },
       "verification": {
-        "source": "https://www.1688.com",
-        "query": "ensemble Essentials",
-        "tested": false,
-        "note": "Parseur testé hors réseau ; validation live à faire sur le PC utilisateur."
+        "source": "LUXE RADAR existing dedicated connector",
+        "http_status": null
       }
     },
     {
@@ -5096,8 +5064,8 @@
       "category": "Marketplaces / grossistes",
       "country": "CN",
       "currency": "EUR",
-      "enabled": true,
-      "status": "active",
+      "enabled": false,
+      "status": "to_test",
       "connector_type": "dedicated",
       "supports_search": true,
       "supports_price": true,
@@ -5109,7 +5077,7 @@
         "image": true,
         "reference": false
       },
-      "notes": "Connecteur dédié sur recherche publique DHgate (__NEXT_DATA__). Activé avec filtrage de pertinence global et avertissements d’authenticité. Aucun warm-up anti-403 ni contournement : une route refusée est ignorée.",
+      "notes": "Connecteur dédié HTTP fonctionnel (JSON __NEXT_DATA__, ~50 produits). Reste OFF : pertinence faible pour Nike Trail (titres réécrits sans la marque, ex. rain boots) et résultats écartés par le filtre de mots du moteur. Warm-up de la page d'accueil requis contre les 403 intermittents.",
       "verification": {
         "source": "https://www.dhgate.com",
         "query": "Nike Trail",
@@ -34196,35 +34164,6 @@
         "source": "https://fromthelabels.com/brands",
         "source_verified": false,
         "http_status": 429
-      }
-    },
-    {
-      "name": "Hacoo",
-      "url": "https://www.hacoo.app",
-      "base_url": "https://www.hacoo.app",
-      "domain": "hacoo.app",
-      "category": "Marketplaces / mode",
-      "country": "ES",
-      "currency": "EUR",
-      "enabled": false,
-      "status": "to_test",
-      "connector_type": "dedicated",
-      "supports_search": false,
-      "supports_price": false,
-      "supports_image": false,
-      "supports_reference": false,
-      "capabilities": {
-        "search": false,
-        "price": false,
-        "image": false,
-        "reference": false
-      },
-      "notes": "Connecteur dédié présent mais non activé : le parcours produit public stable n’est pas disponible sur le web ; la commande officielle passe par l’application. Aucune API privée/session connectée n’est utilisée.",
-      "verification": {
-        "source": "https://www.hacoo.app",
-        "tested": true,
-        "http_status": 200,
-        "note": "Site public vérifié ; recherche produit web non validée."
       }
     }
   ]

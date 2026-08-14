@@ -73,10 +73,6 @@ _FX_CACHE = {
     "rate": None,
     "timestamp": 0.0,
 }
-_FX_REFRESH_LOCK = threading.Lock()
-_FX_REFRESHING = False
-_FX_LAST_ATTEMPT = 0.0
-_FX_RETRY_INTERVAL = 15 * 60
 
 _THREAD_LOCAL = threading.local()
 
@@ -576,9 +572,18 @@ def titre_correspond_recherche(
 # ============================================================
 
 
-def _actualiser_taux_inr_eur_arriere_plan():
-    """Rafraîchit le taux sans jamais bloquer la recherche utilisateur."""
-    global _FX_REFRESHING
+def obtenir_taux_inr_eur():
+    maintenant = time.time()
+
+    taux_cache = _FX_CACHE["rate"]
+    age_cache = maintenant - _FX_CACHE["timestamp"]
+
+    if (
+        taux_cache is not None
+        and age_cache < FX_CACHE_TTL
+    ):
+        return taux_cache
+
     try:
         session = construire_session(
             {
@@ -586,65 +591,48 @@ def _actualiser_taux_inr_eur_arriere_plan():
                 "Accept": "application/json",
             }
         )
+
         try:
             response = session.get(
                 "https://api.frankfurter.dev/v2/rate/INR/EUR",
-                timeout=(2, 3),
+                timeout=(3, 5),
             )
             response.raise_for_status()
-            taux = float(response.json()["rate"])
+            data = response.json()
         finally:
             session.close()
 
-        if taux <= 0:
-            raise ValueError("Taux de change invalide")
-
-        with _FX_REFRESH_LOCK:
-            _FX_CACHE["rate"] = taux
-            _FX_CACHE["timestamp"] = time.time()
-        print(f"[Conversion] Taux INR->EUR actualisé en arrière-plan : {taux}")
-    except Exception as e:
-        # Le taux de secours/caché reste disponible ; aucune recherche n'attend ce réseau.
-        print(f"[Conversion] Actualisation INR->EUR différée : {e}")
-    finally:
-        with _FX_REFRESH_LOCK:
-            _FX_REFRESHING = False
-
-
-def obtenir_taux_inr_eur():
-    """Retourne immédiatement un taux utilisable et rafraîchit le live en fond.
-
-    L'ancien comportement pouvait bloquer la première vague près de 15-20 s si
-    Frankfurter répondait lentement. Pour un radar shopping, une variation de
-    quelques dixièmes de pourcent du change est moins grave qu'un blocage UI.
-    """
-    global _FX_REFRESHING, _FX_LAST_ATTEMPT
-    maintenant = time.time()
-
-    with _FX_REFRESH_LOCK:
-        taux_cache = _FX_CACHE["rate"]
-        age_cache = maintenant - _FX_CACHE["timestamp"]
-        if taux_cache is None:
-            taux_cache = FALLBACK_INR_EUR
-            _FX_CACHE["rate"] = taux_cache
-            _FX_CACHE["timestamp"] = maintenant
-
-        doit_rafraichir = (
-            not _FX_REFRESHING
-            and maintenant - _FX_LAST_ATTEMPT >= _FX_RETRY_INTERVAL
-            and (age_cache >= FX_CACHE_TTL or taux_cache == FALLBACK_INR_EUR)
+        taux = float(
+            data["rate"]
         )
 
-        if doit_rafraichir:
-            _FX_REFRESHING = True
-            _FX_LAST_ATTEMPT = maintenant
-            threading.Thread(
-                target=_actualiser_taux_inr_eur_arriere_plan,
-                name="luxe-fx-inr",
-                daemon=True,
-            ).start()
+        if taux <= 0:
+            raise ValueError(
+                "Taux de change invalide"
+            )
 
-        return taux_cache
+        _FX_CACHE["rate"] = taux
+        _FX_CACHE["timestamp"] = maintenant
+
+        print(
+            "[Conversion] "
+            f"Taux INR->EUR : {taux}"
+        )
+
+        return taux
+
+    except Exception as e:
+        print(
+            "[Conversion] API indisponible, "
+            "taux de secours utilise : "
+            f"{FALLBACK_INR_EUR} ({e})"
+        )
+
+        _FX_CACHE["rate"] = FALLBACK_INR_EUR
+        _FX_CACHE["timestamp"] = maintenant
+
+        return FALLBACK_INR_EUR
+
 
 def convertir_inr_vers_eur(prix_inr):
     prix = _safe_float(prix_inr)

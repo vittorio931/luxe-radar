@@ -179,32 +179,6 @@ TYPE_ALIASES = {
         "jumper",
         "knit",
     ],
-
-    "ensemble": [
-        "ensemble",
-        "set",
-        "tracksuit",
-        "track suit",
-        "survetement",
-        "survêtement",
-        "co ord",
-        "co-ord",
-        "matching set",
-        "two piece",
-        "2 piece",
-        "two piece set",
-        "2 piece set",
-        "2 pcs",
-        "2pcs",
-        "2 pieces",
-        "hoodie and joggers",
-        "hoodie joggers",
-        "hoodie and pants",
-        "hoodie sweatpants",
-        "sweatshirt and joggers",
-        "sweat et pantalon",
-        "top and bottom",
-    ],
 }
 
 
@@ -275,30 +249,6 @@ TYPE_TITRE = {
         "jumper",
         "knit",
     ],
-
-    "ensemble": [
-        "ensemble",
-        "set",
-        "tracksuit",
-        "track suit",
-        "survetement",
-        "co ord",
-        "matching set",
-        "two piece",
-        "2 piece",
-        "two piece set",
-        "2 piece set",
-        "2 pcs",
-        "2pcs",
-        "2 pieces",
-        "hoodie and joggers",
-        "hoodie joggers",
-        "hoodie and pants",
-        "hoodie sweatpants",
-        "sweatshirt and joggers",
-        "sweat et pantalon",
-        "top and bottom",
-    ],
 }
 
 
@@ -365,12 +315,6 @@ def normaliser_texte(texte):
     texte = re.sub(
         r"\s+",
         " ",
-        texte,
-    )
-
-    texte = re.sub(
-        r"\b(?:essantials|essencials|essensials|essentails)\b",
-        "essentials",
         texte,
     )
 
@@ -563,19 +507,6 @@ def titre_correspond_recherche(
             for mot
             in mots_importants
         ):
-            return False
-
-    query_n = normaliser_texte(query)
-    if "essentials" in query_n.split() and "essentials" in titre_n.split():
-        indique_fog = any(
-            marker in titre_n
-            for marker in ("fear of god", "fog essentials", "essentials fear of god")
-        )
-        concurrents = (
-            "adidas", "nike", "reebok", "puma", "asos design",
-            "new balance", "under armour",
-        )
-        if not indique_fog and any(brand in titre_n for brand in concurrents):
             return False
 
     return True
@@ -1466,16 +1397,9 @@ class EbayConnector(
             200,
         )
 
-        query_api = query
-        if type_recherche == "ensemble" and mots_importants:
-            # Pour les ensembles, les vendeurs utilisent ensemble/set/tracksuit.
-            # On interroge eBay avec la marque/modèle seulement puis le filtre
-            # local impose le type, ce qui évite de perdre les titres anglais.
-            query_api = " ".join(mots_importants)
-
         params = {
             "q":
-                query_api,
+                query,
 
             "limit":
                 request_limit,
@@ -1520,8 +1444,6 @@ class EbayConnector(
         print(
             f"[eBay] Recherche : {query}"
         )
-        if query_api != query:
-            print(f"[eBay] Requête large ensemble : {query_api}")
 
         print(
             "[eBay] Filtre strict : "

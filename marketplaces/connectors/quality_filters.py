@@ -4,8 +4,6 @@ import os
 import re
 import unicodedata
 
-from .authenticity import annotate_authenticity
-
 # Filtre volontairement conservateur : il retire surtout les faux positifs
 # évidents. Il ne prétend jamais certifier l'authenticité d'un produit.
 
@@ -115,6 +113,10 @@ def evaluate_result(item, query="", marketplace=""):
         if _has(full, phrase):
             return False, f"annonce à ignorer ({phrase})"
 
+    for phrase in EXPLICIT_FAKE_PHRASES:
+        if _has(full, phrase):
+            return False, f"signal explicite ({phrase})"
+
     # Nike Trail != Portland Trail Blazers.
     q_tokens = set(re.findall(r"[a-z0-9]+", q))
     if "trail" in q_tokens and "blazers" not in q_tokens:
@@ -147,7 +149,7 @@ def filter_results(results, query="", marketplace=""):
     for item in results or []:
         ok, reason = evaluate_result(item, query=query, marketplace=marketplace)
         if ok:
-            kept.append(annotate_authenticity(item, marketplace=marketplace))
+            kept.append(item)
         elif debug:
             title = item.get("titre") if isinstance(item, dict) else repr(item)
             print(f"[QUALITE] Rejet {marketplace}: {title} -> {reason}")

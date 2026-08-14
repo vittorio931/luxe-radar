@@ -12,7 +12,6 @@ MARQUES = {
     "Salomon": 30,
     "On": 30,
     "Under Armour": 15,
-    "Essentials": 50,
     "Ralph Lauren": 20,
     "Lacoste": 20,
     "Fred Perry": 20,
