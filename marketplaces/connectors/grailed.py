@@ -1,4 +1,5 @@
 import json
+import os
 import re
 import time
 import unicodedata
@@ -195,6 +196,27 @@ TYPE_ALIASES = {
             "footwear",
         ),
     },
+    "ensemble": {
+        "query": (
+            "ensemble", "set", "tracksuit", "track suit", "survetement",
+            "survêtement", "co ord", "co-ord", "matching set",
+            "two piece", "2 piece", "two piece set", "2 piece set",
+            "2 pcs", "2pcs", "2 pieces", "hoodie and joggers",
+            "hoodie joggers", "hoodie and pants", "hoodie sweatpants",
+            "sweatshirt and joggers", "sweat et pantalon", "top and bottom",
+        ),
+        "title": (
+            "ensemble", "set", "tracksuit", "track suit", "survetement",
+            "co ord", "matching set", "two piece", "2 piece",
+            "two piece set", "2 piece set", "2 pcs", "2pcs", "2 pieces",
+            "hoodie and joggers", "hoodie joggers", "hoodie and pants",
+            "hoodie sweatpants", "sweatshirt and joggers",
+            "sweat et pantalon", "top and bottom",
+        ),
+        "grailed_suffixes": (
+            "set", "tracksuit", "track-suit", "matching-set",
+        ),
+    },
 }
 
 
@@ -285,6 +307,12 @@ def normaliser_texte(texte):
     texte = re.sub(
         r"\s+",
         " ",
+        texte,
+    )
+
+    texte = re.sub(
+        r"\b(?:essantials|essencials|essensials|essentails)\b",
+        "essentials",
         texte,
     )
 
@@ -490,6 +518,19 @@ def titre_correspond_recherche(
         )
     ):
         return False
+
+    query_n = normaliser_texte(query)
+    if "essentials" in query_n.split() and "essentials" in titre_n.split():
+        indique_fog = any(
+            marker in titre_n
+            for marker in ("fear of god", "fog essentials", "essentials fear of god")
+        )
+        concurrents = (
+            "adidas", "nike", "reebok", "puma", "asos design",
+            "new balance", "under armour",
+        )
+        if not indique_fog and any(brand in titre_n for brand in concurrents):
+            return False
 
     return True
 
@@ -1859,6 +1900,21 @@ def decouvrir_cartes_playwright(
         if cartes:
             return cartes
 
+        # V2.8.2 : le fallback visible pouvait coûter ~20-25 s pour 0
+        # résultat quand Grailed présentait un challenge. Le radar progressif
+        # doit rester rapide : par défaut on s'arrête après le headless.
+        # L'ancien comportement reste disponible manuellement pour diagnostic.
+        autoriser_visible = str(
+            os.environ.get("LUXE_RADAR_GRAILED_VISIBLE", "0")
+        ).strip().lower() in {"1", "true", "yes", "on"}
+
+        if not autoriser_visible:
+            print(
+                "[Grailed] Feed vide/bloqué en headless -> fallback visible "
+                "ignoré (mode rapide)"
+            )
+            return []
+
         print(
             "[Grailed] Feed vide en headless -> essai navigateur visible"
         )
@@ -2051,6 +2107,9 @@ class GrailedConnector(
 
         resultats = []
         produits_vus = set()
+        diag_titre_prix = 0
+        diag_hors_budget = 0
+        diag_doublons = 0
 
         for carte in cartes:
             title = str(
@@ -2068,6 +2127,7 @@ class GrailedConnector(
                 not title
                 or prix_usd is None
             ):
+                diag_titre_prix += 1
                 continue
 
             prix_eur = round(
@@ -2082,6 +2142,7 @@ class GrailedConnector(
                 price_max_float is not None
                 and prix_eur > price_max_float
             ):
+                diag_hors_budget += 1
                 continue
 
             cle_produit = (
@@ -2094,6 +2155,7 @@ class GrailedConnector(
             )
 
             if cle_produit in produits_vus:
+                diag_doublons += 1
                 continue
 
             produits_vus.add(
@@ -2194,6 +2256,11 @@ class GrailedConnector(
         print(
             "[Grailed] "
             f"{len(resultats)} résultats retenus"
+        )
+        print(
+            "[Grailed][DIAG] "
+            f"cartes={len(cartes)} | invalides={diag_titre_prix} | "
+            f"hors_budget={diag_hors_budget} | doublons={diag_doublons}"
         )
 
         return resultats[

@@ -51,6 +51,7 @@ BACKUP_DIR = "backups"
 MANAGED_VERSION = "2026.08"
 
 MANAGED_FILES = (
+    "marketplaces/connectors/authenticity.py",
     "marketplaces/connectors/quality_filters.py",
     "marketplaces/connectors/universal.py",
     "marketplaces/connectors/__init__.py",
@@ -72,11 +73,135 @@ EXCLUDED_DIRS = {
 # FICHIERS INSTALLES
 # ---------------------------------------------------------------------------
 
+AUTHENTICITY_PY = r'''from __future__ import annotations
+
+import re
+import unicodedata
+
+# Ces marqueurs servent uniquement à prévenir l'utilisateur. Ils ne certifient
+# jamais qu'un article est authentique ou contrefait.
+HIGH_RISK_PHRASES = (
+    "1:1",
+    "1 1 quality",
+    "replica",
+    "replique",
+    "réplique",
+    "counterfeit",
+    "contrefacon",
+    "contrefaçon",
+    "super fake",
+    "mirror quality",
+    "aaa quality",
+    "unauthorized authentic",
+    "ua batch",
+    "clone",
+)
+
+MEDIUM_RISK_PHRASES = (
+    "dupe",
+    "inspired by",
+    "inspire",
+    "inspiré",
+    "inspired",
+    "same style",
+    "same design",
+)
+
+# Prudence de source : ce niveau signifie seulement que l'authenticité n'est
+# pas vérifiée par LUXE RADAR. Il ne signifie pas que les produits sont faux.
+SOURCE_REVIEW_RECOMMENDED = {
+    "dhgate",
+    "1688",
+    "hacoo",
+    "aliexpress",
+}
+
+
+def _norm(value):
+    text = "" if value is None else str(value)
+    text = text.lower().strip()
+    text = unicodedata.normalize("NFKD", text)
+    text = "".join(c for c in text if not unicodedata.combining(c))
+    text = text.replace("-", " ").replace("_", " ").replace("’", "'")
+    text = text.replace(":", " ")
+    text = re.sub(r"[^a-z0-9\s']", " ", text)
+    return re.sub(r"\s+", " ", text).strip()
+
+
+def _has(text, phrase):
+    text_n = _norm(text)
+    phrase_n = _norm(phrase)
+    if not text_n or not phrase_n:
+        return False
+    return re.search(r"(?<![a-z0-9])" + re.escape(phrase_n) + r"(?![a-z0-9])", text_n) is not None
+
+
+def authenticity_assessment(item, marketplace=""):
+    """Retourne un niveau de prudence d'authenticité et une explication.
+
+    Niveaux : faible, modere, eleve. Ils décrivent uniquement les signaux
+    visibles dans l'annonce/la source et ne constituent pas une expertise.
+    """
+    if not isinstance(item, dict):
+        return "modere", "Authenticité non vérifiable automatiquement", ""
+
+    title = str(item.get("titre") or item.get("title") or "")
+    description = " ".join(
+        str(item.get(key) or "")
+        for key in ("description", "texte", "condition", "etat")
+    )
+    full = f"{title} {description}".strip()
+
+    high = [phrase for phrase in HIGH_RISK_PHRASES if _has(full, phrase)]
+    if high:
+        signal = ", ".join(high[:3])
+        return (
+            "eleve",
+            "Risque élevé de contrefaçon : signal explicite dans l'annonce",
+            signal,
+        )
+
+    medium = [phrase for phrase in MEDIUM_RISK_PHRASES if _has(full, phrase)]
+    if medium:
+        signal = ", ".join(medium[:3])
+        return (
+            "modere",
+            "Authenticité à vérifier : formulation ambiguë dans l'annonce",
+            signal,
+        )
+
+    source = str(marketplace or item.get("marketplace") or "").strip().lower()
+    if source in SOURCE_REVIEW_RECOMMENDED:
+        return (
+            "modere",
+            "Authenticité non vérifiée par LUXE RADAR sur cette source",
+            "source à vérifier",
+        )
+
+    return (
+        "faible",
+        "Aucun signal explicite détecté — authenticité non garantie",
+        "",
+    )
+
+
+def annotate_authenticity(item, marketplace=""):
+    if not isinstance(item, dict):
+        return item
+    level, warning, signals = authenticity_assessment(item, marketplace=marketplace)
+    item["risque_contrefacon"] = level
+    item["alerte_authenticite"] = warning
+    item["signaux_authenticite"] = signals
+    return item
+'''
+
 QUALITY_FILTERS_PY = r'''from __future__ import annotations
 
 import os
 import re
 import unicodedata
+
+from .authenticity import annotate_authenticity
 
 # Filtre volontairement conservateur : il retire surtout les faux positifs
 # évidents. Il ne prétend jamais certifier l'authenticité d'un produit.
@@ -187,10 +312,6 @@ def evaluate_result(item, query="", marketplace=""):
         if _has(full, phrase):
             return False, f"annonce à ignorer ({phrase})"
 
-    for phrase in EXPLICIT_FAKE_PHRASES:
-        if _has(full, phrase):
-            return False, f"signal explicite ({phrase})"
-
     # Nike Trail != Portland Trail Blazers.
     q_tokens = set(re.findall(r"[a-z0-9]+", q))
     if "trail" in q_tokens and "blazers" not in q_tokens:
@@ -223,7 +344,7 @@ def filter_results(results, query="", marketplace=""):
     for item in results or []:
         ok, reason = evaluate_result(item, query=query, marketplace=marketplace)
         if ok:
-            kept.append(item)
+            kept.append(annotate_authenticity(item, marketplace=marketplace))
         elif debug:
             title = item.get("titre") if isinstance(item, dict) else repr(item)
             print(f"[QUALITE] Rejet {marketplace}: {title} -> {reason}")
@@ -1032,6 +1153,7 @@ def ensure_structure(root: Path):
 def install_framework(root: Path):
     ensure_structure(root)
     connectors = root / "marketplaces" / "connectors"
+    atomic_write_text(connectors / "authenticity.py", AUTHENTICITY_PY)
     atomic_write_text(connectors / "quality_filters.py", QUALITY_FILTERS_PY)
     atomic_write_text(connectors / "universal.py", UNIVERSAL_PY)
     atomic_write_text(connectors / "__init__.py", CONNECTORS_INIT_PY)
@@ -1480,6 +1602,10 @@ def run_smoke_files(root: Path):
     py = project_python(root)
     tests = [
         root / "test_radar_engine_smoke.py",
+        root / "test_asos_connector.py",
+        root / "test_cdiscount_connector.py",
+        root / "test_search_intent_v27.py",
+        root / "test_sources_risk_v28.py",
         root / "test_infinite_scroll.py",
         root / "test_catalog_massive.py",
         root / "test_security_ux.py",
@@ -1507,7 +1633,7 @@ def run_smoke_files(root: Path):
 
 def quality_self_test(root: Path):
     py = project_python(root)
-    code = r'''from marketplaces.connectors.quality_filters import evaluate_result
+    code = r'''from marketplaces.connectors.quality_filters import evaluate_result,filter_results
 cases=[
 ({"titre":"Nike Dri-FIT Trail Running T-Shirt"},"Nike Trail",True),
 ({"titre":"Short Nike Portland Trail Blazers Statement Edition"},"Nike Trail",False),
@@ -1517,6 +1643,8 @@ cases=[
 for item,q,expected in cases:
     got,_=evaluate_result(item,q,"eBay")
     assert got==expected,(item,got,expected)
+suspicious=filter_results([{"titre":"Nike Trail replica 1:1"}],"Nike Trail","DHgate")
+assert suspicious and suspicious[0]["risque_contrefacon"]=="eleve"
 print("quality filters OK")'''
     res = run_command([py, "-c", code], cwd=root, timeout=30, capture=True)
     if res.stdout:

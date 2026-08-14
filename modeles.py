@@ -444,4 +444,64 @@ MARQUES_MODELES = {
         ],
     },
 
+
+    "Essentials": {
+        "Hoodie": [
+            "essentials hoodie",
+            "fear of god essentials hoodie",
+            "fog essentials hoodie",
+            "essentials sweat a capuche",
+        ],
+        "Sweat": [
+            "essentials sweat",
+            "essentials sweatshirt",
+            "fear of god essentials sweatshirt",
+        ],
+        "T-shirt": [
+            "essentials t shirt",
+            "essentials tshirt",
+            "essentials tee",
+            "fear of god essentials tee",
+        ],
+        "Pantalon": [
+            "essentials pantalon",
+            "essentials pants",
+            "essentials sweatpants",
+            "essentials jogger",
+            "fear of god essentials sweatpant",
+        ],
+        "Short": [
+            "essentials short",
+            "essentials shorts",
+            "essentials sweatshort",
+        ],
+        "Ensemble": [
+            "essentials ensemble",
+            "essentials set",
+            "essentials tracksuit",
+            "essentials matching set",
+            "essentials co ord",
+            "essentials two piece",
+            "essentials 2 piece",
+            "essentials 2pcs",
+            "essentials hoodie joggers",
+            "essentials hoodie sweatpants",
+            "essentials hoodie pants",
+            "essentials sweatshirt joggers",
+            "fear of god essentials ensemble",
+            "fear of god essentials set",
+            "fear of god essentials tracksuit",
+            "fear of god essentials matching set",
+            "fear of god essentials hoodie joggers",
+            "fear of god essentials hoodie sweatpants",
+            "fog essentials set",
+            "fog essentials tracksuit",
+        ],
+        "Veste": [
+            "essentials jacket",
+            "essentials track jacket",
+            "fear of god essentials jacket",
+        ],
+    },
+
 }

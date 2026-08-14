@@ -12,6 +12,7 @@ from uuid import uuid4
 from urllib.parse import urlparse
 
 import os
+import re
 
 from flask import Flask, Response, abort, g, jsonify, render_template, request, session, url_for
 from werkzeug.middleware.proxy_fix import ProxyFix
@@ -26,7 +27,7 @@ import billing_stripe
 
 from marketplaces.connectors import get_available_connectors
 from marketplaces.catalog import get_sites
-from radar_engine import rechercher_multi_marketplaces
+from radar_engine import rechercher_multi_marketplaces, _cle_unique_multi, _selection_diversifiee
 from image_similarity import MAX_IMAGE_BYTES, download_listing_image, image_feature, similarity
 
 
@@ -61,6 +62,7 @@ PUBLIC_RESULT_FIELDS = {
     "marketplace", "titre", "title", "prix", "devise", "image", "lien", "url",
     "score", "score_confiance", "similarite_image", "categorie", "reference", "taille", "etat",
     "condition", "livraison", "prix_total", "vendeur", "note_vendeur", "source",
+    "risque_contrefacon", "alerte_authenticite", "signaux_authenticite",
 }
 REFERENCE_CATEGORY_ORDER = {"EXCELLENTE AFFAIRE": 0, "BONNE AFFAIRE": 1, "INTERESSANTE": 2, "A VERIFIER": 3, "DOUTEUSE": 4, "A IGNORER": 5}
 SERVER_MESSAGES = {
@@ -352,12 +354,27 @@ def catalog_page():
         "categories": categories,
     })
 
+def _bounded_env_int(name, default, minimum, maximum):
+    try:
+        value = int(os.environ.get(name, str(default)))
+    except (TypeError, ValueError):
+        value = default
+    return max(minimum, min(value, maximum))
+
+
 INITIAL_RESULTS = 50
 RESULT_BATCH_SIZE = 50
-SEARCH_RESULT_LIMIT = 400
+SEARCH_RESULT_LIMIT = _bounded_env_int("LUXE_RADAR_SEARCH_RESULT_LIMIT", 1000, 100, 2000)
 MAX_BATCH_SIZE = 200
+IMAGE_COMPARE_LIMIT = _bounded_env_int("LUXE_RADAR_IMAGE_COMPARE_LIMIT", 64, 16, 120)
 CACHE_TTL_SECONDS = 30 * 60
 MAX_CACHED_SEARCHES = 20
+
+# Sources qui peuvent prendre sensiblement plus de temps ou varier davantage.
+# Elles sont ajoutées progressivement après le premier rendu pour ne pas
+# bloquer l'utilisateur. Une recherche ciblée sur une seule marketplace reste
+# synchrone afin de garder un comportement simple et prévisible.
+PROGRESSIVE_BACKGROUND_SOURCES = ("ASOS", "Cdiscount", "AliExpress", "DHgate", "1688", "Vinted", "Grailed")
 
 SUBSCRIPTION_PLANS = {
     "free": {
@@ -436,10 +453,16 @@ _image_feature_cache = OrderedDict()
 _IMAGE_FEATURE_CACHE_MAX = 200
 _image_feature_lock = Lock()
 
+# Recherche progressive : une tâche indépendante par source lente.
+# Les mises à jour du cache sont atomiques, donc deux sources qui terminent au
+# même moment ne peuvent pas écraser les résultats l'une de l'autre.
+_progressive_executor = ThreadPoolExecutor(max_workers=7, thread_name_prefix="luxe-progressive")
+
 
 MARQUES = [
     ("Nike", 20), ("Adidas", 20), ("Jordan", 30), ("New Balance", 25),
     ("Asics", 25), ("Salomon", 30), ("On", 30), ("Under Armour", 15),
+    ("Essentials", 50),
     ("Ralph Lauren", 20), ("Lacoste", 20), ("Fred Perry", 20),
     ("Tommy Hilfiger", 20), ("Carhartt WIP", 20), ("Patagonia", 25),
     ("The North Face", 25), ("Arc'teryx", 35), ("Stone Island", 30),
@@ -479,17 +502,137 @@ def invalidate_app_metadata():
         _metadata_cache.update(sites=None, marketplaces=None)
 
 
-def _cache_results(results, owner=None):
+def _marketplace_counts(results):
+    counts = {}
+    for item in results or []:
+        marketplace = str(item.get("marketplace") or "Inconnu")
+        counts[marketplace] = counts.get(marketplace, 0) + 1
+    return counts
+
+
+def _cache_results(results, owner=None, pending_sources=None, completed_sources=None):
     token = uuid4().hex
+    pending_sources = list(dict.fromkeys(str(source) for source in (pending_sources or []) if str(source)))
+    completed_sources = list(dict.fromkeys(str(source) for source in (completed_sources or []) if str(source)))
     with _cache_lock:
         _clean_cache()
         _search_cache[token] = {
             "created_at": monotonic(),
             "owner": str(owner or ""),
-            "results": [dict(item, _rank_index=index) for index, item in enumerate(results)],
+            "results": [dict(item, _rank_index=index) for index, item in enumerate(results or [])],
+            "pending": bool(pending_sources),
+            "pending_sources": pending_sources,
+            "completed_sources": completed_sources,
+            "failed_sources": [],
+            "source_counts": _marketplace_counts(results),
+            "generation": 0,
         }
         _clean_cache()
     return token
+
+
+def _cached_results_snapshot(token, owner=None):
+    """Retourne une copie du catalogue courant sans exposer l'état partagé."""
+    with _cache_lock:
+        _clean_cache()
+        entry = _search_cache.get(token)
+        if entry is None:
+            return None
+        expected_owner = str(entry.get("owner") or "")
+        if expected_owner and not secrets.compare_digest(expected_owner, str(owner or "")):
+            return None
+        return [dict(item) for item in entry.get("results") or []]
+
+
+def _merge_progressive_results(existing, additions):
+    """Fusionne des résultats déjà analysés en conservant le classement pur."""
+    uniques = []
+    seen = set()
+    for item in [*(existing or []), *(additions or [])]:
+        key = _cle_unique_multi(item)
+        if key in seen:
+            continue
+        seen.add(key)
+        cleaned = dict(item)
+        cleaned.pop("_rank_index", None)
+        uniques.append(cleaned)
+
+    ranked, _counts = _selection_diversifiee(
+        uniques,
+        min(len(uniques), SEARCH_RESULT_LIMIT),
+        diversifie=False,
+    )
+    return ranked
+
+
+def _complete_progressive_source(token, source, additions, reference, strict, owner):
+    """Fusion atomique d'une source progressive terminée."""
+    with _cache_lock:
+        _clean_cache()
+        entry = _search_cache.get(token)
+        if entry is None:
+            return None
+        expected_owner = str(entry.get("owner") or "")
+        if expected_owner and not secrets.compare_digest(expected_owner, str(owner or "")):
+            return None
+
+        existing = [dict(item) for item in entry.get("results") or []]
+        results = _merge_progressive_results(existing, additions)
+        results = _rank_by_reference(results, reference, strict)
+        entry["results"] = [dict(item, _rank_index=index) for index, item in enumerate(results)]
+
+        pending = [name for name in entry.get("pending_sources") or [] if name != source]
+        completed = list(entry.get("completed_sources") or [])
+        if source not in completed:
+            completed.append(source)
+        entry["pending_sources"] = pending
+        entry["completed_sources"] = completed
+        entry["source_counts"] = _marketplace_counts(results)
+        entry["pending"] = bool(pending)
+        entry["generation"] = int(entry.get("generation", 0)) + 1
+        return len(existing), len(results), bool(pending)
+
+
+def _fail_progressive_source(token, source, owner):
+    with _cache_lock:
+        entry = _search_cache.get(token)
+        if entry is None:
+            return
+        expected_owner = str(entry.get("owner") or "")
+        if expected_owner and not secrets.compare_digest(expected_owner, str(owner or "")):
+            return
+        entry["pending_sources"] = [name for name in entry.get("pending_sources") or [] if name != source]
+        failed = list(entry.get("failed_sources") or [])
+        if source not in failed:
+            failed.append(source)
+        entry["failed_sources"] = failed
+        entry["pending"] = bool(entry["pending_sources"])
+
+
+def _finish_progressive_source(token, query, price, source, reference, strict, owner):
+    """Termine UNE source en arrière-plan puis fusionne sans relancer les autres."""
+    started = perf_counter()
+    try:
+        additions = rechercher_multi_marketplaces(
+            marque=query,
+            prix_max=price,
+            plateformes=[source],
+            limite=SEARCH_RESULT_LIMIT,
+        )
+        state = _complete_progressive_source(
+            token, source, additions, reference, strict, owner
+        )
+        if state is None:
+            return
+        before, total, still_pending = state
+        print(
+            f"[PROGRESSIF] {source} terminé: +{max(0, total-before)} -> "
+            f"{total} résultats en {perf_counter()-started:.2f}s"
+            + (" | autres sources en cours" if still_pending else " | catalogue final")
+        )
+    except Exception:
+        app.logger.exception("Échec de la source progressive %s", source)
+        _fail_progressive_source(token, source, owner)
 
 
 def _safe_number(value, default=0):
@@ -498,6 +641,24 @@ def _safe_number(value, default=0):
         return number if math.isfinite(number) else default
     except (TypeError, ValueError):
         return default
+
+
+def _canonicalize_search_query(value):
+    """Corrige uniquement les alias/fautes sûrs avant d'appeler les sources.
+
+    Le texte saisi reste affiché tel quel dans l'interface ; cette version sert
+    seulement aux connecteurs. On évite volontairement les corrections
+    générales qui pourraient modifier un nom de modèle légitime.
+    """
+    value = " ".join(str(value or "").split())
+    value = re.sub(
+        r"(?i)\b(?:essantials|essencials|essensials|essentails)\b",
+        "Essentials",
+        value,
+    )
+    if re.search(r"(?i)\bnike\s+running\b", value):
+        value = re.sub(r"(?i)\bmiller\b", "Miler", value)
+    return value
 
 
 def _normalized_reference(value):
@@ -519,7 +680,7 @@ def _rank_by_reference(results, reference, strict=False):
     return matching if strict else [item for _category, _not_match, _index, item in sorted(decorated, key=lambda entry: entry[:3])]
 
 
-def _sorted_results(results, sort="relevance", marketplace="Toutes", price_min=None, price_max=None, price_exact=None, price_tolerance=None, exclude=""):
+def _sorted_results(results, sort="relevance", marketplace="Toutes", price_min=None, price_max=None, price_exact=None, price_tolerance=None, exclude="", risk="all"):
     filtered = list(results)
     if marketplace and marketplace != "Toutes":
         filtered = [item for item in filtered if item.get("marketplace") == marketplace]
@@ -542,6 +703,10 @@ def _sorted_results(results, sort="relevance", marketplace="Toutes", price_min=N
             item for item in filtered
             if not any(word in str(item.get("titre") or item.get("title") or "").casefold() for word in excluded)
         ]
+    if risk == "hide_high":
+        filtered = [item for item in filtered if item.get("risque_contrefacon") != "eleve"]
+    elif risk == "low_only":
+        filtered = [item for item in filtered if item.get("risque_contrefacon") == "faible"]
     keys = {
         "relevance": lambda item: item.get("_rank_index", 0),
         "price_asc": lambda item: (_safe_number(item.get("prix"), float("inf")), item.get("_rank_index", 0)),
@@ -576,7 +741,7 @@ def _cached_image_feature(url):
 
 def _rank_by_image(results, upload_feature):
     """Compare at most 32 public listing thumbnails with bounded concurrent downloads."""
-    candidates = [(index, item.get("image")) for index, item in enumerate(results) if item.get("image")][:32]
+    candidates = [(index, item.get("image")) for index, item in enumerate(results) if item.get("image")][:IMAGE_COMPARE_LIMIT]
     compared = 0
 
     def compare(candidate):
@@ -586,7 +751,7 @@ def _rank_by_image(results, upload_feature):
             return index, None
         return index, round(similarity(upload_feature, feature), 1)
 
-    with ThreadPoolExecutor(max_workers=6) as executor:
+    with ThreadPoolExecutor(max_workers=min(8, max(1, len(candidates)))) as executor:
         futures = [executor.submit(compare, candidate) for candidate in candidates]
         for future in as_completed(futures):
             index, score = future.result()
@@ -616,7 +781,7 @@ def _public_result(item):
     return public
 
 
-def _result_page(token, offset, limit=RESULT_BATCH_SIZE, sort="relevance", marketplace="Toutes", price_min=None, price_max=None, price_exact=None, price_tolerance=None, exclude="", owner=None):
+def _result_page(token, offset, limit=RESULT_BATCH_SIZE, sort="relevance", marketplace="Toutes", price_min=None, price_max=None, price_exact=None, price_tolerance=None, exclude="", risk="all", owner=None):
     offset = max(0, int(offset))
     limit = max(1, min(int(limit), MAX_BATCH_SIZE))
     with _cache_lock:
@@ -627,7 +792,7 @@ def _result_page(token, offset, limit=RESULT_BATCH_SIZE, sort="relevance", marke
         expected_owner = str(entry.get("owner") or "")
         if expected_owner and not secrets.compare_digest(expected_owner, str(owner or "")):
             return None
-        results = _sorted_results(entry["results"], sort=sort, marketplace=marketplace, price_min=price_min, price_max=price_max, price_exact=price_exact, price_tolerance=price_tolerance, exclude=exclude)
+        results = _sorted_results(entry["results"], sort=sort, marketplace=marketplace, price_min=price_min, price_max=price_max, price_exact=price_exact, price_tolerance=price_tolerance, exclude=exclude, risk=risk)
         page = [_public_result(item) for item in results[offset:offset + limit]]
         next_offset = offset + len(page)
         return {
@@ -636,6 +801,29 @@ def _result_page(token, offset, limit=RESULT_BATCH_SIZE, sort="relevance", marke
             "has_more": next_offset < len(results),
             "total": len(results),
         }
+
+
+@app.get("/api/results/<token>/status")
+def result_status(token):
+    if len(token) != 32 or any(char not in "0123456789abcdef" for char in token):
+        return jsonify({"error": "Identifiant de recherche invalide."}), 400
+    with _cache_lock:
+        _clean_cache()
+        entry = _search_cache.get(token)
+        if entry is None:
+            return jsonify({"error": "Recherche expirée."}), 404
+        expected_owner = str(entry.get("owner") or "")
+        if expected_owner and not secrets.compare_digest(expected_owner, str(session.get("csrf_token") or "")):
+            return jsonify({"error": "Recherche expirée."}), 404
+        return jsonify({
+            "pending": bool(entry.get("pending")),
+            "generation": int(entry.get("generation", 0)),
+            "total": len(entry.get("results") or []),
+            "pending_sources": list(entry.get("pending_sources") or []),
+            "completed_sources": list(entry.get("completed_sources") or []),
+            "failed_sources": list(entry.get("failed_sources") or []),
+            "source_counts": dict(entry.get("source_counts") or {}),
+        })
 
 
 @app.get("/api/results/<token>")
@@ -703,7 +891,10 @@ def more_results(token):
     exclude = request.args.get("exclude")
     if exclude is not None:
         exclude = exclude[:200]
-    page = _result_page(token, offset, limit=parsed_limit, sort=sort, marketplace=marketplace, price_min=price_min, price_max=price_max, price_exact=price_exact, price_tolerance=price_tolerance, exclude=exclude, owner=session.get("csrf_token"))
+    risk = request.args.get("risk", "all")
+    if risk not in {"all", "hide_high", "low_only"}:
+        risk = "all"
+    page = _result_page(token, offset, limit=parsed_limit, sort=sort, marketplace=marketplace, price_min=price_min, price_max=price_max, price_exact=price_exact, price_tolerance=price_tolerance, exclude=exclude, risk=risk, owner=session.get("csrf_token"))
     if page is None:
         return jsonify({"error": "Recherche expirée. Relance le radar."}), 404
     return jsonify(page)
@@ -753,6 +944,8 @@ def accueil():
     reference_saisie = ""
     reference_stricte = False
     initial_lots = INITIAL_RESULTS
+    search_pending = False
+    search_generation = 0
 
     if request.method == "GET":
         prefill_query = request.args.get("q", "").strip()[:120]
@@ -788,15 +981,56 @@ def accueil():
                     erreur = _message("price_range")
                 elif erreur is None:
                     plateformes = None if selected_platform == "Toutes" else [selected_platform]
-                    connector_query = recherche if not normalized_reference or normalized_reference in _normalized_reference(recherche) else f"{recherche} {reference_saisie}"
-                    all_results = rechercher_multi_marketplaces(
-                        marque=connector_query,
-                        prix_max=prix,
-                        plateformes=plateformes,
-                        limite=SEARCH_RESULT_LIMIT,
+                    base_connector_query = _canonicalize_search_query(recherche)
+                    connector_query = (
+                        base_connector_query
+                        if not normalized_reference or normalized_reference in _normalized_reference(base_connector_query)
+                        else f"{base_connector_query} {reference_saisie}"
                     )
-                    all_results = _rank_by_reference(all_results, reference_saisie, reference_stricte)
-                    search_token = _cache_results(all_results, session.get("csrf_token")) if all_results else None
+                    # Recherche "Toutes" : seules les sources réellement rapides construisent
+                    # le premier rendu. ASOS/Cdiscount (recherche profonde), AliExpress, Vinted et Grailed
+                    # continuent ensuite indépendamment. Une source lente ne bloque donc plus
+                    # l'affichage initial.
+                    progressive_sources = (
+                        [name for name in PROGRESSIVE_BACKGROUND_SOURCES if name in active_marketplaces]
+                        if plateformes is None else []
+                    )
+                    progressive = plateformes is None and bool(progressive_sources)
+                    if progressive:
+                        fast_platforms = [name for name in active_marketplaces if name not in progressive_sources]
+                        fast_started = perf_counter()
+                        all_results = rechercher_multi_marketplaces(
+                            marque=connector_query,
+                            prix_max=prix,
+                            plateformes=fast_platforms,
+                            limite=SEARCH_RESULT_LIMIT,
+                        ) if fast_platforms else []
+                        all_results = _rank_by_reference(all_results, reference_saisie, reference_stricte)
+                        owner = session.get("csrf_token")
+                        search_token = _cache_results(
+                            all_results,
+                            owner,
+                            pending_sources=progressive_sources,
+                            completed_sources=fast_platforms,
+                        )
+                        search_pending = bool(progressive_sources)
+                        print(
+                            f"[PROGRESSIF] premiers résultats prêts: {len(all_results)} "
+                            f"en {perf_counter()-fast_started:.2f}s | "
+                            f"arrière-plan: {', '.join(progressive_sources)}"
+                        )
+                        for source in progressive_sources:
+                            _progressive_executor.submit(
+                                _finish_progressive_source,
+                                search_token, connector_query, prix, source,
+                                reference_saisie, reference_stricte, owner,
+                            )
+                    else:
+                        all_results = rechercher_multi_marketplaces(
+                            marque=connector_query, prix_max=prix, plateformes=plateformes, limite=SEARCH_RESULT_LIMIT
+                        )
+                        all_results = _rank_by_reference(all_results, reference_saisie, reference_stricte)
+                        search_token = _cache_results(all_results, session.get("csrf_token")) if all_results else None
                     first_page = _result_page(search_token, 0, initial_lots, owner=session.get("csrf_token")) if search_token else None
                     annonces = first_page["results"] if first_page else []
                     total_results = first_page["total"] if first_page else 0
@@ -824,6 +1058,8 @@ def accueil():
         search_token=search_token,
         total_results=total_results,
         initial_results=initial_lots,
+        search_pending=search_pending,
+        search_generation=search_generation,
         subscription_plans=SUBSCRIPTION_PLANS,
         billing_ready=_billing_ready(),
         csrf_token=session["csrf_token"],

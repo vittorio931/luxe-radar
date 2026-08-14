@@ -4,10 +4,13 @@ from urllib.parse import quote
 import os
 import re
 import unicodedata
+from time import perf_counter
 
 from playwright.sync_api import sync_playwright
 
 from modeles import MARQUES_MODELES
+from marketplaces.connectors.authenticity import annotate_authenticity
+from product_recognition import recognize as recognize_product
 
 
 def _verbose_log(message):
@@ -301,8 +304,31 @@ _TYPES_RECHERCHE_MULTI = {
     "ensemble": {
         "aliases": {
             "ensemble",
+            "ensemble complet",
             "set",
+            "set complet",
             "tracksuit",
+            "track suit",
+            "survetement",
+            "survêtement",
+            "co ord",
+            "co-ord",
+            "coord",
+            "two piece",
+            "two-piece",
+            "2 piece",
+            "2-piece",
+            "matching set",
+            "jogging set",
+            "sweat set",
+            "hoodie set",
+            "lot de deux",
+            "haut et bas",
+            "two piece set", "2 piece set", "2 pcs", "2pcs", "2 pieces", "2 pièces",
+            "ensemble 2 pieces", "ensemble 2 pièces", "set 2 pieces", "set 2 pièces",
+            "hoodie and joggers", "hoodie joggers", "hoodie and pants", "hoodie pants",
+            "hoodie sweatpants", "sweatshirt and joggers", "sweatshirt joggers",
+            "sweat et pantalon", "sweat pantalon", "top and bottom", "top bottom set",
         }
     },
     "gilet": {
@@ -311,6 +337,13 @@ _TYPES_RECHERCHE_MULTI = {
             "vest",
         }
     },
+}
+
+
+_PRIORITE_IDENTITE_MULTI = {
+    "fort": 0,
+    "possible": 1,
+    "rejet": 2,
 }
 
 
@@ -455,6 +488,13 @@ def extraire_prix(texte):
 
 def _trouver_cle_marque_catalogue(requete):
     requete_n = nettoyer_texte(requete)
+    # Tolère les fautes fréquentes autour de Fear of God ESSENTIALS sans
+    # rendre la recherche floue pour les autres marques.
+    requete_n = re.sub(
+        r"\b(?:essantials|essencials|essensials|essentails)\b",
+        "essentials",
+        requete_n,
+    )
 
     # Priorité aux noms de marque les plus longs.
     cles = sorted(
@@ -554,9 +594,17 @@ def marque_presente(marque, texte):
 # ============================================================
 
 def _normaliser_multi(texte):
-    return nettoyer_texte(
+    texte_n = nettoyer_texte(
         texte
     )
+    # Correction volontairement limitée à la marque ESSENTIALS. Elle sert
+    # aussi pour les titres de revente qui contiennent parfois la même faute.
+    texte_n = re.sub(
+        r"\b(?:essantials|essencials|essensials|essentails)\b",
+        "essentials",
+        texte_n,
+    )
+    return texte_n
 
 
 def _contient_expression_multi(texte, expression):
@@ -647,11 +695,47 @@ _MOTS_RECHERCHE_IGNORES_MULTI = {
 }
 
 
+_ALIASES_MOTS_IMPORTANTS_MULTI = {
+    # Les marketplaces raccourcissent souvent Fear of God ESSENTIALS en FOG.
+    # On accepte ces alias uniquement comme équivalents de la marque demandée ;
+    # le filtre de type continue de vérifier séparément le vêtement recherché.
+    "essentials": (
+        "essentials",
+        "fear of god",
+        "fog",
+        "fog essentials",
+        "essentials fear of god",
+    ),
+}
+
+
+def _mot_important_present_multi(titre, mot, marketplace=None):
+    titre_n = _normaliser_multi(titre)
+    mot_n = _normaliser_multi(mot)
+
+    aliases = list(_ALIASES_MOTS_IMPORTANTS_MULTI.get(mot_n, (mot_n,)))
+
+    # Les titres des marketplaces à très gros catalogue raccourcissent parfois
+    # ESSENTIALS. On tolère quelques variantes uniquement sur ces sources ;
+    # ASOS/Vinted gardent le contrôle strict pour éviter les homonymes.
+    if mot_n == "essentials" and marketplace in {"AliExpress", "DHgate"}:
+        aliases.extend((
+            "essential",
+            "fg essentials",
+            "fear god essentials",
+        ))
+
+    return any(
+        _contient_expression_multi(titre_n, alias)
+        for alias in _dedupe(aliases)
+    )
+
+
 def _mots_importants_multi(query, type_recherche=None):
     mots = []
 
     for token in _tokens(
-        query
+        _normaliser_multi(query)
     ):
         if token in _MOTS_RECHERCHE_IGNORES_MULTI:
             continue
@@ -681,13 +765,93 @@ def _titre_contient_type(titre, type_recherche):
     if not config:
         return True
 
-    return any(
+    if type_recherche == "ensemble":
+        # ``set`` est très ambigu : ASOS (et d'autres marketplaces) l'utilisent
+        # aussi pour des coffrets beauté, brosses, soins, parfums, etc. Une
+        # requête « ensemble Essentials » ne doit donc jamais être validée par
+        # le seul mot ``set``. Les formulations explicitement vestimentaires
+        # restent fortes, et un ``set`` générique doit avoir un contexte mode.
+        titre_n = _normaliser_multi(titre)
+
+        marqueurs_non_mode = (
+            "skincare", "skin care", "beauty", "brush", "brushes",
+            "makeup", "cosmetic", "cosmetics", "shampoo", "conditioner",
+            "hair care", "haircare", "body wash", "shower", "fragrance",
+            "perfume", "parfum", "cologne", "nail", "manicure", "candle",
+            "gift set", "giftset", "toiletry", "toiletries", "serum",
+            "cleanser", "moisturiser", "moisturizer", "cream", "lotion",
+        )
+
+        marqueurs_mode = (
+            "hoodie", "sweat", "sweatshirt", "crewneck", "veste", "jacket",
+            "coat", "top", "t shirt", "tshirt", "tee", "shirt", "chemise",
+            "pantalon", "pants", "trouser", "trousers", "sweatpant",
+            "sweatpants", "jogger", "joggers", "short", "shorts", "legging",
+            "leggings", "skirt", "jupe", "dress", "robe", "pyjama", "pajama",
+            "loungewear", "tracksuit", "track suit", "survetement", "survêtement",
+            "co ord", "coord", "co-ord", "activewear", "sportswear",
+        )
+
+        fortes = (
+            "tracksuit", "track suit", "survetement", "survêtement",
+            "co ord", "coord", "co-ord", "matching set", "jogging set",
+            "sweat set", "hoodie set", "hoodie and joggers", "hoodie joggers",
+            "hoodie and pants", "hoodie pants", "hoodie sweatpants",
+            "sweatshirt and joggers", "sweatshirt joggers", "sweat et pantalon",
+            "sweat pantalon", "top and bottom", "top bottom set",
+        )
+
+        if any(_contient_expression_multi(titre_n, mot) for mot in fortes):
+            return True
+
+        hauts = (
+            "hoodie", "sweat", "sweatshirt", "crewneck", "veste", "jacket",
+            "top", "t shirt", "tshirt", "tee", "shirt", "chemise",
+        )
+        bas = (
+            "pantalon", "pants", "sweatpant", "sweatpants", "jogger",
+            "joggers", "short", "shorts", "legging", "leggings", "skirt", "jupe",
+        )
+        deux_pieces = (
+            any(_contient_expression_multi(titre_n, mot) for mot in hauts)
+            and any(_contient_expression_multi(titre_n, mot) for mot in bas)
+        )
+
+        if deux_pieces:
+            return True
+
+        # ``2pcs/two piece`` peut aussi décrire un coffret cosmétique. On le
+        # considère comme un ensemble seulement avec un marqueur vestimentaire.
+        aliases_ambigus = (
+            "ensemble", "ensemble complet", "set", "set complet", "two piece",
+            "two-piece", "2 piece", "2-piece", "two piece set", "2 piece set",
+            "2 pcs", "2pcs", "2 pieces", "2 pièces", "lot de deux",
+        )
+        a_alias_ambigu = any(
+            _contient_expression_multi(titre_n, alias)
+            for alias in aliases_ambigus
+        )
+        a_contexte_mode = any(
+            _contient_expression_multi(titre_n, mot)
+            for mot in marqueurs_mode
+        )
+        a_contexte_non_mode = any(
+            _contient_expression_multi(titre_n, mot)
+            for mot in marqueurs_non_mode
+        )
+
+        return bool(a_alias_ambigu and a_contexte_mode and not a_contexte_non_mode)
+
+    if any(
         _contient_expression_multi(
             titre,
             alias,
         )
         for alias in config["aliases"]
-    )
+    ):
+        return True
+
+    return False
 
 
 def _faux_positif_connu(titre, query):
@@ -750,6 +914,31 @@ def _faux_positif_connu(titre, query):
     ):
         return True
 
+    # « Essentials » est une vraie ligne Fear of God, mais le mot est aussi
+    # utilisé comme nom de gamme par Nike, adidas, ASOS DESIGN, Reebok, etc.
+    # Quand l'utilisateur cherche la marque Essentials, on garde les titres
+    # génériques « Essentials hoodie » (fréquents en seconde main) et ceux qui
+    # mentionnent Fear of God, mais on écarte les autres marques explicites.
+    cherche_essentials = "essentials" in query_tokens
+    if cherche_essentials and "essentials" in titre_set:
+        indique_fog = (
+            "fear of god" in titre_n
+            or "fog essentials" in titre_n
+            or "essentials fear of god" in titre_n
+        )
+        marques_concurrentes = (
+            "adidas", "nike", "reebok", "puma", "under armour",
+            "asos design", "new balance", "lacoste", "fila", "champion",
+            "tommy hilfiger", "calvin klein", "jack jones", "jack & jones",
+            "hugo boss", "boss", "ralph lauren", "river island", "weekday",
+            "abercrombie", "hollister", "ellesse", "levis", "levi's",
+        )
+        if not indique_fog and any(
+            _contient_expression_multi(titre_n, marque)
+            for marque in marques_concurrentes
+        ):
+            return True
+
     return False
 
 
@@ -757,43 +946,23 @@ def _titre_correspond_multi(
     titre,
     query,
     type_recherche=None,
+    marketplace=None,
 ):
-    titre_n = _normaliser_multi(
-        titre
+    """
+    V2.8.4 — reconnaissance produit centrale.
+
+    L'ancien filtre exigeait des mots exacts et se comportait très différemment
+    selon les marketplaces. La décision est maintenant déléguée au moteur
+    ``product_recognition`` qui pondère marque, modèle/ligne, type, descripteurs
+    et conflits explicites. ``type_recherche`` reste dans la signature pour la
+    compatibilité avec les anciens appels/tests.
+    """
+    analyse = recognize_product(
+        title=titre,
+        query=query,
+        marketplace=marketplace,
     )
-
-    if not titre_n:
-        return False
-
-    if _faux_positif_connu(
-        titre_n,
-        query,
-    ):
-        return False
-
-    if type_recherche and not _titre_contient_type(
-        titre_n,
-        type_recherche,
-    ):
-        return False
-
-    mots_importants = _mots_importants_multi(
-        query,
-        type_recherche,
-    )
-
-    # Tous les mots importants doivent être dans le titre.
-    # On n'impose pas leur ordre : "Nike Dri-FIT Trail" reste valide.
-    if mots_importants and not all(
-        _contient_expression_multi(
-            titre_n,
-            mot,
-        )
-        for mot in mots_importants
-    ):
-        return False
-
-    return True
+    return bool(analyse.accepted)
 
 
 # ============================================================
@@ -1305,6 +1474,32 @@ def rechercher_vinted(
                 4500
             )
 
+            # Vinted charge une partie du catalogue au fur et à mesure du scroll.
+            # Quand on demande un gros volume, on laisse le feed charger quelques
+            # écrans supplémentaires avant d'analyser les cartes. Cela augmente la
+            # couverture sans changer les filtres de pertinence.
+            if limite_int > 60:
+                try:
+                    max_scrolls = max(2, min(
+                        _safe_int(os.environ.get("LUXE_RADAR_VINTED_SCROLLS", "5"), 5),
+                        8,
+                    ))
+                    precedent = -1
+                    stable = 0
+                    for _ in range(max_scrolls):
+                        courant = page.locator('a[href*="/items/"]').count()
+                        if courant == precedent:
+                            stable += 1
+                        else:
+                            stable = 0
+                        if stable >= 2:
+                            break
+                        precedent = courant
+                        page.mouse.wheel(0, 2600)
+                        page.wait_for_timeout(650)
+                except Exception:
+                    pass
+
             liens = page.locator(
                 'a[href*="/items/"]'
             )
@@ -1769,11 +1964,25 @@ def _analyser_resultat_multi(
         query
     )
 
-    if not _titre_correspond_multi(
-        titre=titre,
+    # V2.8.4 : on construit d'abord le texte disponible puis on fait UNE
+    # reconnaissance centrale. Le score et les raisons seront réutilisés plus
+    # bas au lieu de recalculer une pertinence différente selon la source.
+    texte_annonce = " ".join(
+        str(resultat.get(cle) or "")
+        for cle in (
+            "description", "texte", "condition", "etat",
+            "marque", "brand", "type_produit_site", "product_type",
+            "category", "categorie_site", "reference",
+        )
+    )
+    reconnaissance = recognize_product(
+        title=titre,
         query=query,
-        type_recherche=type_recherche,
-    ):
+        marketplace=marketplace,
+        extra_text=texte_annonce,
+    )
+
+    if not reconnaissance.accepted:
         return None
 
     prix = _safe_float(
@@ -1816,21 +2025,6 @@ def _analyser_resultat_multi(
         titre
     )
 
-    texte_annonce = " ".join(
-        str(
-            resultat.get(
-                cle
-            )
-            or ""
-        )
-        for cle in (
-            "description",
-            "texte",
-            "condition",
-            "etat",
-        )
-    )
-
     tout = (
         f"{titre_n} "
         f"{_normaliser_multi(texte_annonce)}"
@@ -1851,62 +2045,24 @@ def _analyser_resultat_multi(
     )
 
     # --------------------------------------------------------
-    # MATCH
+    # IDENTITE / MATCH PRODUIT
     # --------------------------------------------------------
 
-    score_match = 82
+    score_match = reconnaissance.score
+    raisons.extend(reconnaissance.reasons)
+    for conflit in reconnaissance.conflicts:
+        alertes.append(f"Conflit identité : {conflit}")
 
-    query_n = _normaliser_multi(
-        query
-    )
+    resultat["score_identite"] = reconnaissance.score
+    resultat["niveau_identite"] = reconnaissance.level
+    resultat["identite_marque"] = reconnaissance.profile.brand
+    resultat["identite_modele"] = reconnaissance.profile.model
+    resultat["identite_type"] = reconnaissance.profile.type_name
+    resultat["identite_descripteurs"] = list(reconnaissance.profile.descriptors)
 
-    if contient_mot(
-        titre_n,
-        query_n,
-    ):
-        score_match += 8
-        raisons.append(
-            "Expression recherchée présente dans le titre"
-        )
-    else:
-        raisons.append(
-            "Tous les mots importants sont présents dans le titre"
-        )
-
-    if type_recherche:
-        score_match += 6
-        raisons.append(
-            f"Type correspondant : {type_recherche}"
-        )
-
-    modele = (
-        resultat.get(
-            "modele"
-        )
-        or trouver_modele(
-            query,
-            titre_n,
-        )
-    )
-
+    modele = resultat.get("modele") or reconnaissance.profile.model or trouver_modele(query, titre_n)
     if modele:
-        score_match += 4
-        resultat[
-            "modele"
-        ] = modele
-        raisons.append(
-            f"Modèle détecté : {modele}"
-        )
-
-    score_match = max(
-        0,
-        min(
-            round(
-                score_match
-            ),
-            100,
-        ),
-    )
+        resultat["modele"] = modele
 
     # --------------------------------------------------------
     # CONFIANCE
@@ -2205,6 +2361,10 @@ def _analyser_resultat_multi(
     ] = _dedupe(
         alertes
     )
+
+    # V2.8 : les signaux de contrefaçon restent visibles. On informe et on
+    # laisse l'utilisateur décider via le filtre d'authenticité de l'UI.
+    annotate_authenticity(resultat, marketplace=marketplace)
 
     return resultat
 
@@ -2547,7 +2707,7 @@ def rechercher_multi_marketplaces(
     # propres timeouts internes qui bornent chaque appel.
     delai_total_secondes = 110
     max_workers = min(
-        4,
+        7,
         max(len(plateformes), 1),
     )
 
@@ -2557,20 +2717,20 @@ def rechercher_multi_marketplaces(
     )
 
     try:
-        futurs = {
-            executor.submit(
+        futurs = {}
+        for plateforme in plateformes:
+            futur = executor.submit(
                 _chercher_une_plateforme,
                 plateforme,
-            ): plateforme
-            for plateforme in plateformes
-        }
+            )
+            futurs[futur] = (plateforme, perf_counter())
 
         try:
             for futur in as_completed(
                 futurs,
                 timeout=delai_total_secondes,
             ):
-                plateforme = futurs[futur]
+                plateforme, debut_plateforme = futurs[futur]
 
                 try:
                     _, annonces = futur.result()
@@ -2581,6 +2741,12 @@ def rechercher_multi_marketplaces(
                         f"Erreur {plateforme} : {e}"
                     )
                     continue
+
+                print(
+                    "[MULTI][TEMPS] "
+                    f"{plateforme}: {perf_counter()-debut_plateforme:.2f}s | "
+                    f"{len(annonces or [])} candidat(s)"
+                )
 
                 for annonce in (
                     annonces
@@ -2626,8 +2792,15 @@ def rechercher_multi_marketplaces(
     # --------------------------------------------------------
 
     resultats = []
+    stats_bruts = {}
+    stats_retenus = {}
+    exemples_rejetes = {}
+    diagnostics_identite = {}
 
     for annonce in resultats_bruts:
+        marketplace_stat = str(annonce.get("marketplace") or "Inconnu")
+        stats_bruts[marketplace_stat] = stats_bruts.get(marketplace_stat, 0) + 1
+
         analyse = _analyser_resultat_multi(
             annonce,
             query=query,
@@ -2635,11 +2808,64 @@ def rechercher_multi_marketplaces(
         )
 
         if analyse is None:
+            exemples = exemples_rejetes.setdefault(marketplace_stat, [])
+            titre_rejete = " ".join(str(annonce.get("titre") or "").split())
+            if titre_rejete and len(exemples) < 4:
+                diag = recognize_product(
+                    title=titre_rejete,
+                    query=query,
+                    marketplace=marketplace_stat,
+                    extra_text=" ".join(
+                        str(annonce.get(cle) or "")
+                        for cle in ("description", "texte", "marque", "brand", "type_produit_site", "category")
+                    ),
+                )
+                resume = f"{diag.score}/100 {diag.level} :: {titre_rejete[:130]}"
+                if diag.conflicts:
+                    resume += " :: " + ", ".join(diag.conflicts[:2])
+                if resume not in exemples:
+                    exemples.append(resume[:260])
             continue
 
+        marketplace_retenu = str(analyse.get("marketplace") or marketplace_stat)
+        identite_stats = diagnostics_identite.setdefault(
+            marketplace_retenu,
+            {"fort": 0, "possible": 0, "scores": []},
+        )
+        niveau_identite = str(analyse.get("niveau_identite") or "fort")
+        if niveau_identite in identite_stats:
+            identite_stats[niveau_identite] += 1
+        identite_stats["scores"].append(_safe_float(analyse.get("score_identite"), 0) or 0)
+        stats_retenus[marketplace_retenu] = stats_retenus.get(marketplace_retenu, 0) + 1
         resultats.append(
             analyse
         )
+
+    for marketplace_stat in sorted(set(stats_bruts) | set(stats_retenus)):
+        bruts = stats_bruts.get(marketplace_stat, 0)
+        retenus = stats_retenus.get(marketplace_stat, 0)
+        print(
+            "[MULTI][FILTRE] "
+            f"{marketplace_stat}: {bruts} bruts -> {retenus} pertinents"
+        )
+        identite_stats = diagnostics_identite.get(marketplace_stat)
+        if identite_stats and identite_stats.get("scores"):
+            moyenne = sum(identite_stats["scores"]) / len(identite_stats["scores"])
+            print(
+                f"[MULTI][IDENTITE][{marketplace_stat}] "
+                f"fort={identite_stats['fort']} | possible={identite_stats['possible']} | "
+                f"moyenne={moyenne:.1f}/100"
+            )
+
+        # Affiche des rejets non seulement à 0 résultat, mais aussi quand la
+        # reconnaissance élimine >70% d'une source. On peut alors calibrer la
+        # source avec des preuves plutôt qu'en relâchant aveuglément le filtre.
+        taux = (retenus / bruts) if bruts else 0
+        if bruts and taux < 0.30 and exemples_rejetes.get(marketplace_stat):
+            print(
+                f"[MULTI][REJETS][{marketplace_stat}] "
+                + " | ".join(exemples_rejetes[marketplace_stat])
+            )
 
     # --------------------------------------------------------
     # DEDUPLICATION GLOBALE
@@ -2667,6 +2893,14 @@ def rechercher_multi_marketplaces(
     # Pré-tri stable avant diversification.
     uniques.sort(
         key=lambda x: (
+            _PRIORITE_IDENTITE_MULTI.get(
+                x.get("niveau_identite"),
+                1,
+            ),
+            -_safe_float(
+                x.get("score_identite"),
+                0,
+            ),
             _PRIORITE_CATEGORIE_MULTI.get(
                 x.get(
                     "categorie"
