@@ -1,4 +1,5 @@
 import json
+import os
 import re
 import time
 import unicodedata
@@ -17,6 +18,11 @@ from .base import MarketplaceConnector
 
 
 BASE_URL = "https://www.grailed.com"
+IS_RENDER = bool(
+    os.environ.get("RENDER")
+    or os.environ.get("RENDER_SERVICE_ID")
+    or os.environ.get("RENDER_EXTERNAL_HOSTNAME")
+)
 
 # Secours uniquement si l'API de change ne répond pas.
 FALLBACK_USD_EUR = 0.86
@@ -1668,7 +1674,7 @@ def _collecter_cartes(
                 page.goto(
                     route,
                     wait_until="domcontentloaded",
-                    timeout=30000,
+                    timeout=6500 if IS_RENDER else 30000,
                 )
             except Exception as e:
                 print(
@@ -1858,6 +1864,13 @@ def decouvrir_cartes_playwright(
 
         if cartes:
             return cartes
+
+        if IS_RENDER:
+            print(
+                "[Grailed] Feed vide/bloqué en headless -> "
+                "fallback visible ignoré sur Render"
+            )
+            return []
 
         print(
             "[Grailed] Feed vide en headless -> essai navigateur visible"

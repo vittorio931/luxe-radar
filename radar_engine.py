@@ -10,6 +10,22 @@ from playwright.sync_api import sync_playwright
 from modeles import MARQUES_MODELES
 
 
+def _is_render_runtime():
+    return bool(
+        os.environ.get("RENDER")
+        or os.environ.get("RENDER_SERVICE_ID")
+        or os.environ.get("RENDER_EXTERNAL_HOSTNAME")
+    )
+
+
+def _env_int(name, default, minimum=1, maximum=300):
+    try:
+        value = int(float(os.environ.get(name, default)))
+    except (TypeError, ValueError):
+        value = int(default)
+    return max(minimum, min(value, maximum))
+
+
 def _verbose_log(message):
     if os.environ.get("LUXE_RADAR_VERBOSE", "").strip().lower() in {"1", "true", "yes", "on"}:
         print(message)
@@ -1295,15 +1311,27 @@ def rechercher_vinted(
         try:
             _verbose_log(f"Recherche {query} <= {prix_max_float} EUR...")
 
+            vinted_navigation_timeout_ms = _env_int(
+                "LUXE_RADAR_VINTED_TIMEOUT_MS",
+                8000 if _is_render_runtime() else 30000,
+                minimum=2500,
+                maximum=30000,
+            )
+            vinted_settle_ms = _env_int(
+                "LUXE_RADAR_VINTED_SETTLE_MS",
+                700 if _is_render_runtime() else 4500,
+                minimum=0,
+                maximum=5000,
+            )
+
             page.goto(
                 url,
                 wait_until="domcontentloaded",
-                timeout=30000,
+                timeout=vinted_navigation_timeout_ms,
             )
 
-            page.wait_for_timeout(
-                4500
-            )
+            if vinted_settle_ms:
+                page.wait_for_timeout(vinted_settle_ms)
 
             liens = page.locator(
                 'a[href*="/items/"]'
@@ -1359,7 +1387,7 @@ def rechercher_vinted(
                     )
                     texte_annonce = (
                         bloc.inner_text(
-                            timeout=2000
+                            timeout=800 if _is_render_runtime() else 2000
                         )
                     )
                 except Exception:
@@ -2476,6 +2504,24 @@ def rechercher_multi_marketplaces(
         ).strip()
     )
 
+    # Sur le petit service Render, démarre d'abord les sources qui
+    # donnent le plus souvent des résultats rapidement. Cela évite
+    # qu'une source lente occupe tous les workers avant eBay/Vinted.
+    if _is_render_runtime() and len(plateformes) > 1:
+        priorite_prod = {
+            "eBay": 0,
+            "67behaviour": 1,
+            "AliExpress": 2,
+            "Vinted": 3,
+            "ASOS": 4,
+            "Grailed": 5,
+            "SSENSE": 6,
+        }
+        plateformes = sorted(
+            plateformes,
+            key=lambda nom: priorite_prod.get(nom, 50),
+        )
+
     resultats_bruts = []
 
     # On récupère volontairement plus de candidats que le TOP final.
@@ -2543,13 +2589,24 @@ def rechercher_multi_marketplaces(
             ),
         )
 
-    # Délai global raisonnable ; chaque connecteur a déjà ses
-    # propres timeouts internes qui bornent chaque appel.
-    delai_total_secondes = 110
+    # En production Render, une source lente ne doit jamais retenir
+    # la requête HTTP pendant une minute. Les connecteurs ont en plus
+    # leurs propres délais courts. La valeur reste configurable.
+    delai_total_secondes = _env_int(
+        "LUXE_RADAR_MULTI_TIMEOUT",
+        12 if _is_render_runtime() else 110,
+        minimum=5,
+        maximum=110,
+    )
     max_workers = min(
         4,
         max(len(plateformes), 1),
     )
+    if _is_render_runtime():
+        print(
+            "[MULTI][PROD] "
+            f"budget global={delai_total_secondes}s | sources={len(plateformes)}"
+        )
 
     executor = ThreadPoolExecutor(
         max_workers=max_workers,

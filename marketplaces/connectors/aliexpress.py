@@ -11,6 +11,7 @@ Aucun compte, CAPTCHA ou mur anti-bot n'est contourné.
 from __future__ import annotations
 
 import json
+import os
 import re
 import threading
 import unicodedata
@@ -50,8 +51,13 @@ REQUEST_HEADERS = {
     "Accept-Encoding": "identity",
 }
 
-HTTP_CONNECT_TIMEOUT = 4
-HTTP_READ_TIMEOUT = 15
+IS_RENDER = bool(
+    os.environ.get("RENDER")
+    or os.environ.get("RENDER_SERVICE_ID")
+    or os.environ.get("RENDER_EXTERNAL_HOSTNAME")
+)
+HTTP_CONNECT_TIMEOUT = 2.5 if IS_RENDER else 4
+HTTP_READ_TIMEOUT = 6 if IS_RENDER else 15
 HTTP_TIMEOUT = (HTTP_CONNECT_TIMEOUT, HTTP_READ_TIMEOUT)
 
 # AliExpress demande une page racine avant la recherche pour éviter les 403
@@ -112,11 +118,12 @@ def normaliser_texte(texte):
 
 
 def construire_session():
+    retry_budget = 0 if IS_RENDER else 2
     retry = Retry(
-        total=2,
-        connect=2,
-        read=2,
-        status=2,
+        total=retry_budget,
+        connect=retry_budget,
+        read=retry_budget,
+        status=retry_budget,
         backoff_factor=0.45,
         status_forcelist=(429, 500, 502, 503, 504),
         allowed_methods=frozenset({"GET"}),

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 import re
 import unicodedata
 from urllib.parse import quote
@@ -18,8 +19,13 @@ SEARCH_URL = f"{BASE_URL}/en-fr/men"
 # (vérifié : "nike trail" ne renvoie que des Nike trail, "arc'teryx"
 # uniquement des Arc'teryx). Les données produits sont lues depuis le
 # balisage structuré JSON-LD présent dans la page HTML.
-HTTP_CONNECT_TIMEOUT = 4
-HTTP_READ_TIMEOUT = 12
+IS_RENDER = bool(
+    os.environ.get("RENDER")
+    or os.environ.get("RENDER_SERVICE_ID")
+    or os.environ.get("RENDER_EXTERNAL_HOSTNAME")
+)
+HTTP_CONNECT_TIMEOUT = 2.5 if IS_RENDER else 4
+HTTP_READ_TIMEOUT = 5 if IS_RENDER else 12
 HTTP_TIMEOUT = (HTTP_CONNECT_TIMEOUT, HTTP_READ_TIMEOUT)
 
 USER_AGENT = (
@@ -120,11 +126,12 @@ def _dedupe(iterable):
 
 
 def construire_session():
+    retry_budget = 0 if IS_RENDER else 2
     retry = Retry(
-        total=2,
-        connect=2,
-        read=2,
-        status=2,
+        total=retry_budget,
+        connect=retry_budget,
+        read=retry_budget,
+        status=retry_budget,
         backoff_factor=0.45,
         status_forcelist=(429, 500, 502, 503, 504),
         allowed_methods=frozenset({"GET"}),

@@ -20,6 +20,14 @@ services:
         value: "true"
       - key: LUXE_RADAR_VERBOSE
         value: "false"
+      - key: PLAYWRIGHT_BROWSERS_PATH
+        value: "0"
+      - key: LUXE_RADAR_MULTI_TIMEOUT
+        value: "12"
+      - key: LUXE_RADAR_VINTED_TIMEOUT_MS
+        value: "8000"
+      - key: LUXE_RADAR_VINTED_SETTLE_MS
+        value: "700"
       - key: WEB_CONCURRENCY
         value: "1"
       - key: EBAY_CLIENT_ID

@@ -21,9 +21,12 @@ from .base import MarketplaceConnector
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 ENV_FILE = PROJECT_ROOT / ".env"
 
+# En local, charge .env s'il existe. En production (Render, etc.),
+# les secrets viennent des variables d'environnement et aucun fichier
+# .env physique n'est requis.
 load_dotenv(
     dotenv_path=ENV_FILE,
-    override=True,
+    override=False,
 )
 
 EBAY_CLIENT_ID = os.getenv(
@@ -36,6 +39,12 @@ EBAY_CLIENT_SECRET = os.getenv(
     "",
 ).strip()
 
+
+IS_RENDER = bool(
+    os.environ.get("RENDER")
+    or os.environ.get("RENDER_SERVICE_ID")
+    or os.environ.get("RENDER_EXTERNAL_HOSTNAME")
+)
 
 EBAY_MARKETPLACE_ID = "EBAY_FR"
 
@@ -65,11 +74,12 @@ _TOKEN_CACHE = {
 # ============================================================
 
 def creer_session_http():
+    retry_budget = 1 if IS_RENDER else 3
     retry = Retry(
-        total=3,
-        connect=3,
-        read=3,
-        status=3,
+        total=retry_budget,
+        connect=retry_budget,
+        read=retry_budget,
+        status=retry_budget,
         backoff_factor=0.6,
 
         status_forcelist=(
@@ -590,25 +600,18 @@ def obtenir_token_ebay(
         ):
             return token_cache
 
-    if not ENV_FILE.exists():
-
-        raise RuntimeError(
-            "Fichier .env introuvable : "
-            f"{ENV_FILE}"
-        )
-
     if not EBAY_CLIENT_ID:
 
         raise RuntimeError(
-            "EBAY_CLIENT_ID absent ou vide "
-            "dans le fichier .env"
+            "EBAY_CLIENT_ID absent. Configure cette variable "
+            "dans l'environnement du service."
         )
 
     if not EBAY_CLIENT_SECRET:
 
         raise RuntimeError(
-            "EBAY_CLIENT_SECRET absent ou vide "
-            "dans le fichier .env"
+            "EBAY_CLIENT_SECRET absent. Configure cette variable "
+            "dans l'environnement du service."
         )
 
     try:
@@ -639,8 +642,8 @@ def obtenir_token_ebay(
             },
 
             timeout=(
-                5,
-                15,
+                3 if IS_RENDER else 5,
+                6 if IS_RENDER else 15,
             ),
         )
 
@@ -1470,8 +1473,8 @@ class EbayConnector(
                 params=params,
 
                 timeout=(
-                    5,
-                    20,
+                    3 if IS_RENDER else 5,
+                    8 if IS_RENDER else 20,
                 ),
             )
 
@@ -1515,8 +1518,8 @@ class EbayConnector(
                 params=params,
 
                 timeout=(
-                    5,
-                    20,
+                    3 if IS_RENDER else 5,
+                    8 if IS_RENDER else 20,
                 ),
             )
 
