@@ -1,0 +1,6 @@
+# Outils facultatifs, jamais requis pour faire tourner le site.
+piper-tts==1.4.2
+imageio==2.37.4
+imageio-ffmpeg==0.6.0
+numpy==2.5.2
+Pillow==12.3.0

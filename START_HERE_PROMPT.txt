@@ -1,0 +1,26 @@
+Open the project at:
+
+C:\Users\aless\vinted-radar ancien
+
+Before doing anything else:
+1. Read AGENTS.md.
+2. Read docs/PROJECT_CONTEXT.md.
+3. Read docs/ROADMAP.md.
+4. Read docs/TESTING.md.
+5. Inspect the current code because code is the source of truth if docs are stale.
+6. Run the manager backup before meaningful edits.
+7. Run a baseline diagnostic/test.
+8. Tell me what currently works, what is broken, and what you recommend doing first.
+
+Important: do not expose .env secrets, do not bypass anti-bot/access controls, and do not remove working Vinted/eBay/67behaviour/Grailed support.
+
+My immediate product goal is:
+- many more results;
+- continuous/infinite scrolling;
+- sorting after search;
+- exact-price filters;
+- exact-reference search;
+- product comparator;
+- then image-based search.
+
+Work as autonomously as possible: inspect, edit, test, diagnose, fix and retest rather than asking me to copy tiny code patches manually.

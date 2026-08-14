@@ -1,0 +1,23 @@
+{
+  "name": "LUXE RADAR",
+  "short_name": "LUXE RADAR",
+  "id": "/",
+  "description": "Trouve les meilleures annonces avant les autres.",
+  "start_url": "/",
+  "display": "standalone",
+  "display_override": ["window-controls-overlay", "standalone", "minimal-ui"],
+  "background_color": "#07090d",
+  "theme_color": "#a8ff3e",
+  "lang": "fr",
+  "categories": ["shopping", "lifestyle", "productivity"],
+  "shortcuts": [
+    {"name": "Lancer le Radar", "short_name": "Radar", "url": "/#radar"},
+    {"name": "Voir les favoris", "short_name": "Favoris", "url": "/#favorites"},
+    {"name": "Portfolio revendeur", "short_name": "Portfolio", "url": "/#portfolio"}
+  ],
+  "icons": [
+    {"src": "/static/app-icon-192.png?v=20260814-2", "sizes": "192x192", "type": "image/png", "purpose": "any maskable"},
+    {"src": "/static/app-icon-512.png?v=20260814-2", "sizes": "512x512", "type": "image/png", "purpose": "any maskable"},
+    {"src": "/static/app-icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any"}
+  ]
+}

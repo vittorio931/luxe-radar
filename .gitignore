@@ -1,0 +1,39 @@
+# Secrets et configuration locale
+.env
+.env.*
+!.env.example
+
+# Environnements et caches Python
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# État local et sauvegardes du manager
+.luxe_radar/
+backups/
+
+# Journaux et fichiers système
+*.log
+.DS_Store
+Thumbs.db
+
+# Intermédiaires lourds de la campagne (les fichiers publics sont dans static/)
+media/campaign/*_silencieux.mp4
+media/campaign/*_musique.wav
+media/campaign/*_voix.wav
+media/campaign/luxe_radar_*_60s.mp4
+media/campaign/voices/
+
+# Profils ou traces d’automatisation navigateur
+playwright/.auth/
+test-results/
+
+# Sources de la campagne (seules les versions publiques de static/campaign sont servies)
+media/
+
+# Archive des données produit (fichier source, non chargé au runtime)
+modeles.zip

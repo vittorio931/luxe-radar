@@ -1,0 +1,509 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>LUXE RADAR</title>
+
+<style>
+* {
+    box-sizing: border-box;
+    margin: 0;
+    padding: 0;
+}
+
+body {
+    font-family: Arial, sans-serif;
+    background: #09090b;
+    color: white;
+}
+
+.app {
+    display: flex;
+    min-height: 100vh;
+}
+
+.sidebar {
+    width: 230px;
+    background: #0f0f12;
+    border-right: 1px solid #222228;
+    padding: 25px 15px;
+    position: fixed;
+    top: 0;
+    bottom: 0;
+}
+
+.logo {
+    font-size: 22px;
+    font-weight: bold;
+    padding: 10px;
+    margin-bottom: 35px;
+}
+
+.logo span {
+    color: #8b5cf6;
+}
+
+.nav {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+}
+
+.nav div {
+    padding: 13px;
+    border-radius: 10px;
+    color: #9999a3;
+}
+
+.nav .active,
+.nav div:hover {
+    background: #1b1b21;
+    color: white;
+}
+
+.main {
+    margin-left: 230px;
+    width: calc(100% - 230px);
+    padding: 35px 45px;
+}
+
+.header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 30px;
+}
+
+.header h1 {
+    font-size: 32px;
+}
+
+.header p {
+    color: #888892;
+    margin-top: 6px;
+}
+
+.avatar {
+    width: 42px;
+    height: 42px;
+    border-radius: 50%;
+    background: #8b5cf6;
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    font-weight: bold;
+}
+
+.stats {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 15px;
+    margin-bottom: 20px;
+}
+
+.stat {
+    background: #111114;
+    border: 1px solid #25252c;
+    border-radius: 16px;
+    padding: 20px;
+}
+
+.stat small {
+    color: #888892;
+}
+
+.stat strong {
+    display: block;
+    font-size: 27px;
+    margin-top: 8px;
+}
+
+.radar {
+    background: #111114;
+    border: 1px solid #25252c;
+    border-radius: 20px;
+    padding: 25px;
+}
+
+.radar h2 {
+    margin-bottom: 7px;
+}
+
+.subtitle {
+    color: #888892;
+    margin-bottom: 25px;
+    font-size: 14px;
+}
+
+.controls {
+    display: flex;
+    gap: 10px;
+}
+
+input {
+    background: #18181d;
+    color: white;
+    border: 1px solid #303039;
+    border-radius: 10px;
+    padding: 14px;
+    outline: none;
+}
+
+input:focus {
+    border-color: #8b5cf6;
+}
+
+.marque {
+    flex: 1;
+}
+
+button,
+.button {
+    background: #8b5cf6;
+    color: white;
+    border: none;
+    border-radius: 10px;
+    padding: 14px 20px;
+    font-weight: bold;
+    cursor: pointer;
+    text-decoration: none;
+}
+
+button:hover,
+.button:hover {
+    background: #7c3aed;
+}
+
+.message {
+    margin-top: 20px;
+    padding: 15px;
+    background: #18181d;
+    border: 1px solid #292932;
+    border-radius: 10px;
+}
+
+.results-title {
+    margin: 25px 0 15px;
+}
+
+.results {
+    display: grid;
+    grid-template-columns: repeat(2, 1fr);
+    gap: 18px;
+}
+
+.card {
+    overflow: hidden;
+    background: #16161b;
+    border: 1px solid #292932;
+    border-radius: 15px;
+    transition: 0.2s;
+}
+
+.card:hover {
+    transform: translateY(-3px);
+    border-color: #8b5cf6;
+}
+
+.card-image {
+    width: 100%;
+    height: 260px;
+    background: #0d0d10;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    overflow: hidden;
+}
+
+.card-image img {
+    width: 100%;
+    height: 100%;
+    object-fit: contain;
+}
+
+.no-image {
+    color: #666;
+    font-size: 14px;
+}
+
+.card-content {
+    padding: 17px;
+}
+
+.card-title {
+    font-weight: bold;
+    font-size: 16px;
+    line-height: 1.4;
+    margin-bottom: 10px;
+}
+
+.card-info {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 12px;
+}
+
+.card-price {
+    color: #a78bfa;
+    font-size: 20px;
+    font-weight: bold;
+}
+
+.score {
+    background: #17251b;
+    color: #4ade80;
+    border-radius: 8px;
+    padding: 6px 9px;
+    font-size: 13px;
+    font-weight: bold;
+}
+
+.category {
+    display: inline-block;
+    margin-bottom: 8px;
+    padding: 6px 9px;
+    border-radius: 8px;
+    background: #202025;
+    font-size: 13px;
+    font-weight: bold;
+}
+
+.alert {
+    color: #f87171;
+    font-size: 13px;
+    margin-bottom: 6px;
+}
+
+.model {
+    color: #aaa;
+    font-size: 13px;
+    margin-bottom: 14px;
+}
+
+.card-button {
+    display: block;
+    text-align: center;
+    width: 100%;
+}
+
+@media (max-width: 900px) {
+    .results {
+        grid-template-columns: 1fr;
+    }
+}
+</style>
+</head>
+
+<body>
+
+<div class="app">
+
+<aside class="sidebar">
+
+    <div class="logo">
+        LUXE <span>RADAR</span>
+    </div>
+
+    <div class="nav">
+        <div class="active">Dashboard</div>
+        <div>Radar</div>
+        <div>Favoris</div>
+        <div>Historique</div>
+        <div>Parametres</div>
+    </div>
+
+</aside>
+
+<main class="main">
+
+    <div class="header">
+
+        <div>
+            <h1>Bonjour</h1>
+            <p>Trouve les meilleures affaires avant les autres.</p>
+        </div>
+
+        <div class="avatar">A</div>
+
+    </div>
+
+    <div class="stats">
+
+        <div class="stat">
+            <small>Marques surveillees</small>
+            <strong>{{ marques|length }}</strong>
+        </div>
+
+        <div class="stat">
+            <small>Annonces trouvees</small>
+            <strong>{{ annonces|length }}</strong>
+        </div>
+
+        <div class="stat">
+            <small>Radar</small>
+            <strong style="color:#22c55e">ACTIF</strong>
+        </div>
+
+    </div>
+
+    <section class="radar">
+
+        <h2>Radar de bonnes affaires</h2>
+
+        <p class="subtitle">
+            Recherche automatiquement les annonces correspondant a tes criteres.
+        </p>
+
+        <form method="POST">
+
+            <div class="controls">
+
+                <input
+                    class="marque"
+                    type="text"
+                    name="marque"
+                    placeholder="Ex : Stone Island"
+                    value="{{ recherche or '' }}"
+                    required
+                >
+
+                <input
+                    type="number"
+                    name="prix"
+                    placeholder="Prix max EUR"
+                    min="1"
+                    required
+                >
+
+                <button type="submit">
+                    Lancer le radar
+                </button>
+
+            </div>
+
+        </form>
+
+        {% if erreur %}
+
+        <div class="message" style="color:#f87171;">
+            {{ erreur }}
+        </div>
+
+        {% endif %}
+
+        {% if recherche %}
+
+        <div class="message">
+            Recherche :
+            <strong>{{ recherche }}</strong>
+        </div>
+
+        {% endif %}
+
+        {% if annonces %}
+
+        <h3 class="results-title">
+            {{ annonces|length }} annonces trouvees
+        </h3>
+
+        <div class="results">
+
+            {% for annonce in annonces %}
+
+            <div class="card">
+
+                <div class="card-image">
+
+                    {% if annonce.image %}
+
+                    <img
+                        src="{{ annonce.image }}"
+                        alt="{{ annonce.titre }}"
+                        loading="lazy"
+                    >
+
+                    {% else %}
+
+                    <div class="no-image">
+                        Image indisponible
+                    </div>
+
+                    {% endif %}
+
+                </div>
+
+                <div class="card-content">
+
+                    <div class="card-title">
+                        {{ annonce.titre }}
+                    </div>
+
+                    <div class="card-info">
+
+                        <div class="card-price">
+                            {{ "%.2f"|format(annonce.prix) }} EUR
+                        </div>
+
+                        <div class="score">
+                            Score : {{ annonce.score }}/100
+                        </div>
+
+                    </div>
+
+                    {% if annonce.categorie %}
+
+                    <div class="category">
+                        {{ annonce.categorie }}
+                    </div>
+
+                    {% endif %}
+
+                    {% if annonce.alertes %}
+
+                        {% for alerte in annonce.alertes %}
+
+                        <div class="alert">
+                            {{ alerte }}
+                        </div>
+
+                        {% endfor %}
+
+                    {% endif %}
+
+                    {% if annonce.modele %}
+
+                    <div class="model">
+                        Modele detecte :
+                        <strong>{{ annonce.modele }}</strong>
+                    </div>
+
+                    {% endif %}
+
+                    <a
+                        href="{{ annonce.lien }}"
+                        target="_blank"
+                        class="button card-button"
+                    >
+                        Voir l'annonce
+                    </a>
+
+                </div>
+
+            </div>
+
+            {% endfor %}
+
+        </div>
+
+        {% endif %}
+
+    </section>
+
+</main>
+
+</div>
+
+</body>
+</html>

@@ -1,0 +1,4 @@
+-r requirements.txt
+-r requirements-media.txt
+pip-audit==2.10.1
+bandit==1.9.4

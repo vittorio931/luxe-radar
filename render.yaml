@@ -1,0 +1,32 @@
+services:
+  - type: web
+    name: luxe-radar
+    runtime: python
+    plan: free
+    buildCommand: python -m pip install -r requirements.txt && python -m playwright install chromium
+    startCommand: gunicorn --config gunicorn.conf.py wsgi:application
+    healthCheckPath: /api/health
+    autoDeployTrigger: commit
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.14.3
+      - key: LUXE_RADAR_ENV
+        value: production
+      - key: LUXE_RADAR_SECRET_KEY
+        generateValue: true
+      - key: LUXE_RADAR_TRUST_PROXY
+        value: "1"
+      - key: LUXE_RADAR_HTTPS
+        value: "true"
+      - key: LUXE_RADAR_VERBOSE
+        value: "false"
+      - key: WEB_CONCURRENCY
+        value: "1"
+      - key: EBAY_CLIENT_ID
+        sync: false
+      - key: EBAY_CLIENT_SECRET
+        sync: false
+      - key: STRIPE_SECRET_KEY
+        sync: false
+      - key: LUXE_RADAR_PUBLIC_BASE_URL
+        value: https://luxe-radar.onrender.com

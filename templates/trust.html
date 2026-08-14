@@ -1,0 +1,26 @@
+<!doctype html>
+<html lang="{{ language }}" data-theme="dark">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+  <meta name="theme-color" content="#07090d">
+  <meta name="description" content="{{ copy.intro }}">
+  <meta name="robots" content="index,follow">
+  <link rel="canonical" href="{{ url_for('trust_center', _external=True) }}">
+  <link rel="icon" href="{{ url_for('static', filename='app-icon.svg') }}">
+  <link rel="stylesheet" href="{{ url_for('static', filename='trust.css', v='20260814-3') }}">
+  <title>{{ copy.title }} — LUXE RADAR</title>
+</head>
+<body>
+  <div class="aurora aurora-one" aria-hidden="true"></div><div class="aurora aurora-two" aria-hidden="true"></div>
+  <header class="trust-nav"><a class="brand" href="{{ url_for('accueil', lang=language) }}"><span>LR</span>LUXE <em>RADAR</em></a><nav><a class="language" href="{{ url_for('trust_center', lang='fr' if language == 'en' else 'en') }}">{{ copy.switch }}</a><a class="back" href="{{ url_for('accueil', lang=language) }}">{{ copy.back }}</a></nav></header>
+  <main>
+    <section class="hero"><div class="hero-orb" aria-hidden="true">LR</div><p class="eyebrow">{{ copy.kicker }}</p><h1>{{ copy.headline }}</h1><p>{{ copy.intro }}</p><div class="facts"><strong><b>{{ marketplaces|length }}</b> {{ copy.tested }}</strong><strong><b>{{ catalog_site_count }}</b> {{ copy.listed }}</strong><strong><b>0</b> {{ copy.fake|replace('0 ', '') }}</strong></div></section>
+    <section class="grid">
+      {% for title, body in copy.cards %}<article><span>{{ '%02d'|format(loop.index) }}</span><h2>{{ title }}</h2><p>{{ body.format(markets=marketplaces|join(', ')) }}</p></article>{% endfor %}
+    </section>
+    <aside><div class="notice-mark">✓</div><div><span>{{ copy.before }}</span><strong>{{ copy.legal }}</strong></div></aside>
+  </main>
+  <footer><span>LR</span>{{ copy.footer }}</footer>
+</body>
+</html>
