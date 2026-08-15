@@ -17,6 +17,8 @@ from __future__ import annotations
 import html as html_lib
 import re
 import unicodedata
+from threading import Lock
+from time import monotonic
 from urllib.parse import quote_plus, urljoin
 
 import requests
@@ -44,11 +46,19 @@ REQUEST_HEADERS = {
     "Accept-Encoding": "identity",
 }
 
-HTTP_CONNECT_TIMEOUT = 4
-HTTP_READ_TIMEOUT = 15
+HTTP_CONNECT_TIMEOUT = 2.5
+HTTP_READ_TIMEOUT = 6
 HTTP_TIMEOUT = (HTTP_CONNECT_TIMEOUT, HTTP_READ_TIMEOUT)
 
 _MAX_ITEMS = 200
+
+# V3.0.2 : circuit breaker de stabilité. Si Zalando refuse ou ne répond pas,
+# on ne martèle pas la source et on laisse les autres marketplaces continuer.
+_CIRCUIT_LOCK = Lock()
+_CIRCUIT_BLOCKED_UNTIL = 0.0
+_CIRCUIT_REASON = ""
+_CIRCUIT_TIMEOUT_SECONDS = 120
+_CIRCUIT_BLOCK_SECONDS = 600
 
 # Une carte Zalando : <article ...> ... <a href="...sluq.html" ...> ...
 _ARTICLE_RE = re.compile(
@@ -127,15 +137,16 @@ def normaliser_texte(texte):
 
 
 def construire_session():
+    # Pas de retry automatique : avec un read timeout à 15 s + retries, une
+    # seule page Zalando pouvait immobiliser une expansion plus de 30 s.
+    # Une panne de cette source doit échouer vite et laisser le radar avancer.
     retry = Retry(
-        total=2,
-        connect=2,
-        read=2,
-        status=2,
-        backoff_factor=0.45,
-        status_forcelist=(429, 500, 502, 503, 504),
+        total=0,
+        connect=0,
+        read=0,
+        status=0,
+        redirect=0,
         allowed_methods=frozenset({"GET"}),
-        respect_retry_after_header=True,
         raise_on_status=False,
     )
 
@@ -222,6 +233,22 @@ def _produit_depuis_carte(carte):
     }
 
 
+def _circuit_remaining():
+    with _CIRCUIT_LOCK:
+        remaining = _CIRCUIT_BLOCKED_UNTIL - monotonic()
+        reason = _CIRCUIT_REASON
+    return max(0.0, remaining), reason
+
+
+def _trip_circuit(seconds, reason):
+    global _CIRCUIT_BLOCKED_UNTIL, _CIRCUIT_REASON
+    until = monotonic() + max(1, int(seconds))
+    with _CIRCUIT_LOCK:
+        if until > _CIRCUIT_BLOCKED_UNTIL:
+            _CIRCUIT_BLOCKED_UNTIL = until
+            _CIRCUIT_REASON = str(reason or "indisponible")[:80]
+
+
 class ZalandoConnector(MarketplaceConnector):
     name = "Zalando"
     display_name = "Zalando"
@@ -262,6 +289,14 @@ class ZalandoConnector(MarketplaceConnector):
         except (TypeError, ValueError):
             page = 1
 
+        remaining, circuit_reason = _circuit_remaining()
+        if remaining > 0:
+            print(
+                "[Zalando] "
+                f"pause rapide {remaining:.0f}s ({circuit_reason}) -> source ignorée"
+            )
+            return []
+
         print(
             "[Zalando] "
             f"Recherche : {query} | page={page}"
@@ -282,6 +317,14 @@ class ZalandoConnector(MarketplaceConnector):
                     "[Zalando] "
                     f"HTTP {response.status_code}"
                 )
+                if response.status_code in {403, 429}:
+                    _trip_circuit(
+                        _CIRCUIT_BLOCK_SECONDS,
+                        f"HTTP {response.status_code}",
+                    )
+                    print(
+                        "[Zalando] blocage détecté -> pause temporaire, aucun contournement"
+                    )
                 return []
 
             cartes = _ARTICLE_RE.findall(
@@ -374,9 +417,10 @@ class ZalandoConnector(MarketplaceConnector):
             return resultats[:limit]
 
         except requests.RequestException as e:
+            _trip_circuit(_CIRCUIT_TIMEOUT_SECONDS, "timeout/réseau")
             print(
                 "[Zalando] "
-                f"Erreur globale : {e}"
+                f"Erreur rapide : {e}"
             )
             return []
 

@@ -34,8 +34,8 @@ from marketplaces.connectors.universal import discover_catalog_wave
 
 
 app = Flask(__name__)
-APP_VERSION = "3.0.1"
-ASSET_VERSION = "20260815-301"
+APP_VERSION = "3.0.2"
+ASSET_VERSION = "20260815-302"
 IS_PRODUCTION = os.environ.get("LUXE_RADAR_ENV", "development").lower() == "production"
 IS_RENDER_RUNTIME = bool(
     os.environ.get("RENDER")
@@ -436,13 +436,12 @@ MAX_CACHED_SEARCHES = _bounded_env_int(
 # bloquées ensuite. Une recherche ciblée sur UNE marketplace reste synchrone.
 PROGRESSIVE_FAST_SOURCES = ("eBay",)
 PROGRESSIVE_BACKGROUND_SOURCES = (
-    # V2.9.2 : les sources HTTP qui répondent réellement passent d'abord.
-    # Grailed/Vinted utilisent Chromium ou sont plus variables : ils restent
-    # volontairement à la fin pour ne plus monopoliser un worker pendant que
-    # l'utilisateur attend les premières vagues utiles.
-    "Zalando", "SSENSE", "ASOS", "AliExpress", "DHgate",
-    "Spartoo", "Footshop", "JD Sports", "Cdiscount", "67behaviour",
-    "1688", "Grailed", "Vinted",
+    # V3.0.2 : priorité aux sources HTTP les plus stables. Zalando reste actif
+    # mais passe après les sources rapides : un 403/timeout Zalando ne doit plus
+    # retarder les premières vagues utiles. Aucun blocage n'est contourné.
+    "SSENSE", "ASOS", "AliExpress", "DHgate",
+    "Spartoo", "Footshop", "JD Sports", "Cdiscount", "Zalando",
+    "67behaviour", "1688", "Grailed", "Vinted",
 )
 
 SUBSCRIPTION_PLANS = {
@@ -810,7 +809,7 @@ def _finish_progressive_source(token, query, price, source, reference, strict, o
             # V2.9.2 : ne pas analyser 100+ cartes par source au premier passage.
             # Le scroll infini demandera les pages suivantes au besoin.
             source_caps = {
-                "Zalando": 50,
+                "Zalando": 30,
                 "SSENSE": 50,
                 "ASOS": 60,
                 "AliExpress": 60,
@@ -1116,7 +1115,10 @@ def _expand_search_once(token, owner, marketplace="Toutes"):
             # Pendant que Grailed/Vinted/les sources lentes finissent leur premier
             # passage, le scroll peut déjà avancer sur les deux pages HTTP rapides.
             # On évite ainsi le "mur" de 20-30 s en bas de liste.
-            wave_order = ("eBay", "Zalando") if initial_pipeline_pending else EXPAND_WAVE_ORDER
+            # Pendant le pipeline initial, eBay seul alimente le scroll.
+            # Zalando tourne déjà en arrière-plan et ne doit pas lancer une
+            # seconde requête lente en parallèle.
+            wave_order = ("eBay",) if initial_pipeline_pending else EXPAND_WAVE_ORDER
             for step in range(len(wave_order)):
                 candidate = wave_order[(round_index + step) % len(wave_order)]
                 if candidate == "__catalog__":
@@ -1165,7 +1167,7 @@ def _expand_search_once(token, owner, marketplace="Toutes"):
             additions = _analyse_discovery_items(raw_items, query, price)
         else:
             next_page = int(page_state.get(target, 1)) + 1
-            page_limits = {"eBay": 50, "Zalando": 50, "Vinted": 30}
+            page_limits = {"eBay": 50, "Zalando": 30, "Vinted": 30}
             additions = rechercher_multi_marketplaces(
                 marque=query,
                 prix_max=price,
@@ -1207,9 +1209,14 @@ def _expand_search_once(token, owner, marketplace="Toutes"):
                 empty[target] = int(empty.get(target, 0)) + 1
             else:
                 empty[target] = 0
-            # Deux pages successives sans nouveauté = source épuisée pour cette
-            # requête. Cela évite de boucler éternellement sur une page miroir.
-            if empty[target] >= 2:
+            # Zalando : une page d'expansion vide suffit. En production Render,
+            # on limite aussi Zalando à la page 2 : les pages profondes sont
+            # nettement plus susceptibles de timeout/403 et bloquaient le scroll
+            # pendant ~30-40 s. Les autres sources gardent le seuil historique.
+            empty_threshold = 1 if target == "Zalando" else 2
+            if empty[target] >= empty_threshold:
+                exhausted.add(target)
+            if target == "Zalando" and IS_RENDER_RUNTIME and int(next_page or 1) >= 2:
                 exhausted.add(target)
             entry["page_state"] = state
             entry["page_empty"] = empty

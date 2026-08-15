@@ -10,4 +10,4 @@ def test_registry_imports_without_package_exports():
 
 if __name__ == "__main__":
     test_registry_imports_without_package_exports()
-    print("OK V3.0.1 connector registry")
+    print("OK V3.0.2 connector registry")

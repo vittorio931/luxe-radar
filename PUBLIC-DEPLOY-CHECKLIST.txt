@@ -1,10 +1,10 @@
-LUXE RADAR V3.0.1 — CHECKLIST MISE EN PUBLIC
+LUXE RADAR V3.0.2 — CHECKLIST MISE EN PUBLIC
 ============================================
 
 AVANT PUSH
 [ ] Le ZIP a été extrait avec app_web.py directement à la racine.
 [ ] Aucun .env, .pem ou .key n'est présent dans le dépôt.
-[ ] /api/version doit annoncer 3.0.1 et asset 20260815-301.
+[ ] /api/version doit annoncer 3.0.2 et asset 20260815-302.
 [ ] Test local : Nike P-6000.
 [ ] Test local : On Cloud 5.
 [ ] Test local : Columbia Tech Wind.
@@ -31,8 +31,11 @@ PAIEMENT
 
 APRÈS DÉPLOIEMENT
 [ ] /api/health = 200.
-[ ] /api/version = 3.0.1 / 20260815-301.
+[ ] /api/version = 3.0.2 / 20260815-302.
 [ ] Faire un Ctrl+F5 une fois si l'ancien service worker reste en cache.
 [ ] Tester une recherche réelle et ouvrir au moins une annonce.
 [ ] Tester le scroll sur mobile.
 [ ] Vérifier qu'une source bloquée n'empêche pas les autres de répondre.
+
+[ ] Sur Render, vérifier qu’une recherche longue ne lance pas Zalando page 3.
+[ ] Si Zalando timeout/403, vérifier que les expansions suivantes continuent sans nouveau blocage long.

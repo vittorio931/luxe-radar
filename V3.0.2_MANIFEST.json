@@ -1,0 +1,539 @@
+{
+  "release": "LUXE RADAR V3.0.2 PERFORMANCE HOTFIX",
+  "app_version": "3.0.2",
+  "asset_version": "20260815-302",
+  "purpose": "Zalando fast-fail / infinite-scroll anti-stall on Render",
+  "security": "No CAPTCHA, 403, login or anti-bot bypass. Blocked sources fail closed.",
+  "files": [
+    {
+      "path": ".dockerignore",
+      "size": 255,
+      "sha256": "fcaa0b3cbf4d02cb16d0ee0d0799e236772e73fe79a2aab184146825766b3f87"
+    },
+    {
+      "path": ".gitignore",
+      "size": 787,
+      "sha256": "9900bfd943c36460a4d6c2d6e122986b671146ef4a481b4c65abae18518522c4"
+    },
+    {
+      "path": "PUBLIC-DEPLOY-CHECKLIST.txt",
+      "size": 1674,
+      "sha256": "9de5dc575c0aacb60bd6b53820fa14703d80e165c565ef6c14121337c9435779"
+    },
+    {
+      "path": "Procfile",
+      "size": 51,
+      "sha256": "875e6720697a136262ec986ba1a6018d0961b06cee8ec3e42bbd967a39b721ce"
+    },
+    {
+      "path": "README-V3.0.1-PUBLIC.txt",
+      "size": 2295,
+      "sha256": "e8f5494936e98d43124773f89ab65e766da2a55716901a1988a459da941e6257"
+    },
+    {
+      "path": "README-V3.0.2-PERFORMANCE.txt",
+      "size": 1000,
+      "sha256": "f4899a5bf57a12a2a35ec742dcd0fb80e3cdf2f7e105288dd9090c729e19bb99"
+    },
+    {
+      "path": "README.md",
+      "size": 2682,
+      "sha256": "bffa3b8225d2aeb0772b5504414403c48c4b51793790172884a05580f3e40734"
+    },
+    {
+      "path": "V3.0.1_MANIFEST.json",
+      "size": 18337,
+      "sha256": "63681d1e84f39bfbdbd301a264fb2bcbfff6afce5bb4432dde1e36cbcff37866"
+    },
+    {
+      "path": "app_web.py",
+      "size": 71521,
+      "sha256": "038b0005c4f8376dc8d4310ef3ad2b3824e2480517b982ea2bee193979442daa"
+    },
+    {
+      "path": "billing_stripe.py",
+      "size": 4106,
+      "sha256": "b72ec5252886985b91a418e546c4610165c249421d445e1b3a3ef275956eb3d0"
+    },
+    {
+      "path": "connector_registry.py",
+      "size": 4710,
+      "sha256": "d35999865e4170f45bd4209666121107a65e868c24717559606eb5517fb8e77b"
+    },
+    {
+      "path": "gunicorn.conf.py",
+      "size": 465,
+      "sha256": "99c785792ec721c782eb92fe69f077e4321b498e8025dd1fbd85c660abbfe2f1"
+    },
+    {
+      "path": "image_similarity.py",
+      "size": 2464,
+      "sha256": "50ffb9f2b7eed87f122040e0dfc18472bd3dbed32f47d8d8a46232296b590976"
+    },
+    {
+      "path": "luxe_radar_manager.py",
+      "size": 75445,
+      "sha256": "f05ae68a9297b1aa0499502c60931763feb49c913349521dd2d7bbe075450ac8"
+    },
+    {
+      "path": "marketplaces/README.md",
+      "size": 619,
+      "sha256": "bdb3f78580361708e6d12a70021812b2ad3489c9884b79439a272a72d137d309"
+    },
+    {
+      "path": "marketplaces/__init__.py",
+      "size": 90,
+      "sha256": "f142a67ef0ddbd41dde114ba7faec5a57a05e7d328d4ea04e9b2454ddec2cfc4"
+    },
+    {
+      "path": "marketplaces/catalog.py",
+      "size": 3534,
+      "sha256": "20daf698cf35b5e67bb5129ec7dc07d6f33801328274d760d2b452f1f94f0648"
+    },
+    {
+      "path": "marketplaces/connectors/__init__.py",
+      "size": 4427,
+      "sha256": "34539206cf396d21626e846c5dc468f932192297ba3bcc5396a84cd5a1008034"
+    },
+    {
+      "path": "marketplaces/connectors/ali1688.py",
+      "size": 12996,
+      "sha256": "ec463ed3484d6aa66164e95c2861bfea0f30607d3ac1d547bcab4301399dc4c0"
+    },
+    {
+      "path": "marketplaces/connectors/aliexpress.py",
+      "size": 22922,
+      "sha256": "0ac06e28f60860e2c7416b051e0e2b5eb466eade15a3d5d802469102a7322514"
+    },
+    {
+      "path": "marketplaces/connectors/asos.py",
+      "size": 40203,
+      "sha256": "f8148ef7a3e9935b6accd6248c39a89405e3ced833e70d3296758c83896a55d4"
+    },
+    {
+      "path": "marketplaces/connectors/authenticity.py",
+      "size": 3447,
+      "sha256": "7c2bf23342cc082ec84538306db7316bd14d0669e9773ca1f59dbea69a5788ec"
+    },
+    {
+      "path": "marketplaces/connectors/base.py",
+      "size": 977,
+      "sha256": "2fbdf00ab558ed405068b6975f19897d0722b7d9c570a1ff90bf119130d514c1"
+    },
+    {
+      "path": "marketplaces/connectors/behaviour67.py",
+      "size": 42328,
+      "sha256": "ec4ca989edc83dc1a901d9425d254c08c08b593c10bacebe4304596727e50c9e"
+    },
+    {
+      "path": "marketplaces/connectors/cdiscount.py",
+      "size": 29963,
+      "sha256": "994435125fe31c886df4ef58377dae32e32e084dce08aa10b016842c4ab94485"
+    },
+    {
+      "path": "marketplaces/connectors/dhgate.py",
+      "size": 12554,
+      "sha256": "978221896274964adbd97ba3b77dba3efc904168bbb1eb4c008008f27aea0874"
+    },
+    {
+      "path": "marketplaces/connectors/ebay.py",
+      "size": 40835,
+      "sha256": "8fd5b1b901f3c67459fbb9f64ea966cb42f7d009c54544b4c2a69da691618b5e"
+    },
+    {
+      "path": "marketplaces/connectors/grailed.py",
+      "size": 48275,
+      "sha256": "605a9500a04bd8907cf12a764a0e546418630d121a52e8364fdb9f4628956a6d"
+    },
+    {
+      "path": "marketplaces/connectors/hacoo.py",
+      "size": 724,
+      "sha256": "98a7573b77684857b5d80095b61dfecb161fa51c09a5c62442c3f6f49b343f22"
+    },
+    {
+      "path": "marketplaces/connectors/quality_filters.py",
+      "size": 5483,
+      "sha256": "0df40670262ae85260dc46126351359e6d857e708a0ad40a395e444790801217"
+    },
+    {
+      "path": "marketplaces/connectors/retail_public.py",
+      "size": 13361,
+      "sha256": "462496a8e52927d4bdf0181a4f5fa406e376a957425cebc08f6cd33ae57b698a"
+    },
+    {
+      "path": "marketplaces/connectors/ssense.py",
+      "size": 10377,
+      "sha256": "e168dfa8a00a7afb399dc8c70a0467ba3ee9f86f404ba5788590181ed022bce3"
+    },
+    {
+      "path": "marketplaces/connectors/universal.py",
+      "size": 23904,
+      "sha256": "4c06f76979bc2e50e8fd3527da412107530300805d8a70411c670edd4b006385"
+    },
+    {
+      "path": "marketplaces/connectors/vestiaire.py",
+      "size": 2178,
+      "sha256": "3c57bcae5d2e745e93cc92e045c6045b858bdfc7c35b29aa9e6b0a4b1c3c8c29"
+    },
+    {
+      "path": "marketplaces/connectors/vinted.py",
+      "size": 1267,
+      "sha256": "b50959f35bd8a024613919fa1a4967b3611c2b25946ccfdbc0f145e6cd5885ed"
+    },
+    {
+      "path": "marketplaces/connectors/zalando.py",
+      "size": 11139,
+      "sha256": "2d79fca043dc859b0e047718bc0f2a9112129e1b14219a1f23f734dcc9d1143d"
+    },
+    {
+      "path": "marketplaces/registry.py",
+      "size": 363,
+      "sha256": "cf4ae11b511fe4e08a72a4cb1ff293115ec003b8726bae26b36076b3d18bc07a"
+    },
+    {
+      "path": "marketplaces/sites.json",
+      "size": 1031893,
+      "sha256": "6903b0037cda74ab3515707c125f1a0676967243a03a2d9322ecb7912676521f"
+    },
+    {
+      "path": "modeles.py",
+      "size": 14296,
+      "sha256": "032d85bb1dd4f79ddd0adc85ffd24da44aa4acf422b3b3d7bb3a9cd584f42756"
+    },
+    {
+      "path": "product_recognition.py",
+      "size": 28994,
+      "sha256": "997cb195d83eaae1ea171264855da69979e3820c93101c1e66aeb16ca7659d32"
+    },
+    {
+      "path": "radar.py",
+      "size": 1647,
+      "sha256": "1512e000bfa59c1f5e7687f12a46607cde315a29840891856342e42c73950831"
+    },
+    {
+      "path": "radar_engine.py",
+      "size": 76161,
+      "sha256": "a3c209f09ac430144aa74609f7df20d3a1c272fa3d245a05a6f3aafa947d9505"
+    },
+    {
+      "path": "render.yaml",
+      "size": 1437,
+      "sha256": "1ba06f3cf29c88abc2b4a7e18ba2e1f766c286ddab4021cd54c7172c700a990c"
+    },
+    {
+      "path": "requirements-dev.txt",
+      "size": 78,
+      "sha256": "5dc4e0ccc5a272ffec0bb4806608e2809a330bf35cdcb9318fe0ce92975b7828"
+    },
+    {
+      "path": "requirements-media.txt",
+      "size": 147,
+      "sha256": "a631c113a5cd6118fa57b891a53d1f3bc2e1e9ad9dccf6f80dbbbe5cc6b65618"
+    },
+    {
+      "path": "requirements.txt",
+      "size": 215,
+      "sha256": "726e2257afb86fe2249bb6e20a6ccf271029923f5b0ef3d2c370e676f0bb3db2"
+    },
+    {
+      "path": "search_understanding.py",
+      "size": 18240,
+      "sha256": "ebfa4df5a7b33c934597d5c26e5f562007171ca354a8c9227f186162f53765c5"
+    },
+    {
+      "path": "static/app-icon-192.png",
+      "size": 1507,
+      "sha256": "ce37175a45ab86103780a61ac6f46dc96100fb02e9c00873a6abaf5f1c495f01"
+    },
+    {
+      "path": "static/app-icon-512.png",
+      "size": 3770,
+      "sha256": "7c066190358ba63f90d63dc0caff1367ad4d0f61347e90920bbdd533a737dca5"
+    },
+    {
+      "path": "static/app-icon.svg",
+      "size": 489,
+      "sha256": "4afa467a415a8584df6b399faf171ac768ba4457bf168b988f7a76cb91538344"
+    },
+    {
+      "path": "static/app.css",
+      "size": 88970,
+      "sha256": "419796367007b5bdec241ca490eeec8fdc4d0022c258d40819ccc5744581cd9f"
+    },
+    {
+      "path": "static/app.js",
+      "size": 119816,
+      "sha256": "2a39030988a0aa668d31898ee207d03e300a7eda6026035f6cc2fbe2fd80f7f8"
+    },
+    {
+      "path": "static/campaign/acheteur-malin-en.vtt",
+      "size": 407,
+      "sha256": "e441164e422307ed13b11dd085f4ba2fc85f6be2c554d7114a5923185282898b"
+    },
+    {
+      "path": "static/campaign/acheteur-malin-fr.vtt",
+      "size": 526,
+      "sha256": "cdfdbd0da0edd1bf27c0ae2775fd785f44456a00befdb83aaf42be33fa43d685"
+    },
+    {
+      "path": "static/campaign/bonne-affaire-en.vtt",
+      "size": 424,
+      "sha256": "f1cbe3b57eb72b57b83d1e320940e9896ab39b63e088fb79705b5faf26fc48c1"
+    },
+    {
+      "path": "static/campaign/bonne-affaire-fr.vtt",
+      "size": 564,
+      "sha256": "5df32596ada00b15cf268c941d0616d4c7de7832cfb6bae098c215d112e23d0d"
+    },
+    {
+      "path": "static/campaign/chasse-vintage-en.vtt",
+      "size": 413,
+      "sha256": "45842b3f5c6b03e44c9fd2186dc5ce9848e4f1e061b8ac660a4f979ba74527c8"
+    },
+    {
+      "path": "static/campaign/chasse-vintage-fr.vtt",
+      "size": 549,
+      "sha256": "286c64dff9645baa51d5173673c3fda7d2f3cad41f595ba95aa92fc2b18833e8"
+    },
+    {
+      "path": "static/campaign/gain-de-temps-en.vtt",
+      "size": 405,
+      "sha256": "fbd0e4d48e4c6157ec50937000aa1b2e0a50306c51baea2abf37402b40dcb3d0"
+    },
+    {
+      "path": "static/campaign/gain-de-temps-fr.vtt",
+      "size": 569,
+      "sha256": "171a826bc6262d5c8ddc5341cc2adf0880f66d4666a94ba96a29245919b76d58"
+    },
+    {
+      "path": "static/campaign/guide-publication.txt",
+      "size": 2249,
+      "sha256": "6e799e48d86bcac057e05524e6f6b1093476b16157ac8301b6afefec4ab33a29"
+    },
+    {
+      "path": "static/campaign/luxe_radar_acheteur_malin_60s.mp4",
+      "size": 7690544,
+      "sha256": "7a3365c297cd9568d497b063688465b16f935ac3016b6c2e0494c7b1c4be6062"
+    },
+    {
+      "path": "static/campaign/luxe_radar_acheteur_malin_miniature.png",
+      "size": 618270,
+      "sha256": "d66a791ddf4e1955aede8ffebbc2ef676ffa4dc8d643afc1e82407deb02c9528"
+    },
+    {
+      "path": "static/campaign/luxe_radar_acheteur_malin_miniature.webp",
+      "size": 26950,
+      "sha256": "a3aa317cf9c30e9ab0cfb3950f2772d4b315f504f247b500094188cfb2bef091"
+    },
+    {
+      "path": "static/campaign/luxe_radar_bonne_affaire_60s.mp4",
+      "size": 7752960,
+      "sha256": "fb1101301583133688bb035fab34dc8c515be4c925ef7fdaa8201e47be7ba648"
+    },
+    {
+      "path": "static/campaign/luxe_radar_bonne_affaire_miniature.png",
+      "size": 614189,
+      "sha256": "741319111ac30607c5a975497595c37b218c73b51ac51f3352c0a0960ec858ab"
+    },
+    {
+      "path": "static/campaign/luxe_radar_bonne_affaire_miniature.webp",
+      "size": 25252,
+      "sha256": "a9c1efdd75ab1b416351aa7e3c27f672b26b2ed57ddfd649a68bf5a0ef48cd00"
+    },
+    {
+      "path": "static/campaign/luxe_radar_chasse_vintage_60s.mp4",
+      "size": 7769824,
+      "sha256": "d1be784a896848b0aafda31d2e04ddd088ea47fd38b76ea5fa24c2fcb0ed5f32"
+    },
+    {
+      "path": "static/campaign/luxe_radar_chasse_vintage_miniature.png",
+      "size": 616669,
+      "sha256": "688efbe5a1a4c2a63a238a04dba74ffcc96695b2815ba7118c65cb4a39fa4c86"
+    },
+    {
+      "path": "static/campaign/luxe_radar_chasse_vintage_miniature.webp",
+      "size": 26836,
+      "sha256": "36103de634d5bdb6bc0286b19e72cda5d0545bfb5c8614a7479db54be3df342e"
+    },
+    {
+      "path": "static/campaign/luxe_radar_gain_de_temps_60s.mp4",
+      "size": 7895744,
+      "sha256": "0eb4b06a413fd9f1ca1ec4998e3dc554e83e4e8968ec603027cbb8a1d3af768e"
+    },
+    {
+      "path": "static/campaign/luxe_radar_gain_de_temps_miniature.png",
+      "size": 614190,
+      "sha256": "19b87a1ca5fb6426dc94b59ccc1748f51732e63eed2575f3146c7f53639cbeb8"
+    },
+    {
+      "path": "static/campaign/luxe_radar_gain_de_temps_miniature.webp",
+      "size": 27186,
+      "sha256": "c4f81626f4ef50099f0a6301180b1152514fff1c9f59cd54d05d646a1ff06242"
+    },
+    {
+      "path": "static/campaign/luxe_radar_revendeur_60s.mp4",
+      "size": 7813386,
+      "sha256": "10f45b82248ac35dcef0717b24526cfb8b88f74e472a9922d57d136a0ab8aa32"
+    },
+    {
+      "path": "static/campaign/luxe_radar_revendeur_miniature.png",
+      "size": 618082,
+      "sha256": "72932a583730abc031e0bd6128eb7aafa43472cc15fdc02ce1640aacaa4b6b41"
+    },
+    {
+      "path": "static/campaign/luxe_radar_revendeur_miniature.webp",
+      "size": 27116,
+      "sha256": "61282023362a8a6e53f98eac1f08c9ff8df5eb5ec4ee52a6a47f2d0f7af7cf7c"
+    },
+    {
+      "path": "static/campaign/luxe_radar_transparence_60s.mp4",
+      "size": 7066883,
+      "sha256": "67544d45584e6e9208ff31a798235dbdd2634f9c46114f7c98ede3abece833e5"
+    },
+    {
+      "path": "static/campaign/luxe_radar_transparence_miniature.png",
+      "size": 619767,
+      "sha256": "a65fcf191c3ecf3757e6180fe7516fe43376185543e869ed186398c66863a678"
+    },
+    {
+      "path": "static/campaign/luxe_radar_transparence_miniature.webp",
+      "size": 27888,
+      "sha256": "faecc1d9f2edefef55015ceae7747162edd5ccfbd8b1858460a5084b77a23843"
+    },
+    {
+      "path": "static/campaign/revendeur-en.vtt",
+      "size": 445,
+      "sha256": "1c3b96b2a5c85688c4abfa7d9a069ac025700df4bffd013ae63a99cdaa361381"
+    },
+    {
+      "path": "static/campaign/revendeur-fr.vtt",
+      "size": 615,
+      "sha256": "35fdda6f05f9f968106c6e93194f95137f6c9f4cb9f17bcdcecaf3b107efe42b"
+    },
+    {
+      "path": "static/campaign/transparence-en.vtt",
+      "size": 438,
+      "sha256": "525e7af30326e7bef3f91d687f5860c3423a807417e7a6d6887b5dda44f185f1"
+    },
+    {
+      "path": "static/campaign/transparence-fr.vtt",
+      "size": 579,
+      "sha256": "43cbdae3df3465e81cf2f7f5ecfcb7c81b7045a99867f0a9d0e763093fb52652"
+    },
+    {
+      "path": "static/manifest.webmanifest",
+      "size": 1251,
+      "sha256": "974d802d290b509102b7ffb3596d7a30ae750acbe082df68c70ba082b215fc88"
+    },
+    {
+      "path": "static/offline.css",
+      "size": 1129,
+      "sha256": "a6a949a44d35b1fc464daadbb8262676129cadfe6eab8784703479918ef7262d"
+    },
+    {
+      "path": "static/offline.html",
+      "size": 805,
+      "sha256": "cd87b923ac1d7774e547a65a26fd9e056eeabc75020e1e95181cff732d37c940"
+    },
+    {
+      "path": "static/offline.js",
+      "size": 86,
+      "sha256": "a9674c2a1fc7823b80423d75ff4cf031eabeee727e3750b79217df9e1361402f"
+    },
+    {
+      "path": "static/risk.js",
+      "size": 924,
+      "sha256": "01a90cb881d9a3fd31b63a725d5269b40c64668da29e6f3945f1444462b47fd1"
+    },
+    {
+      "path": "static/social-card.png",
+      "size": 388817,
+      "sha256": "c702c67170f2fde1372b2cb7170b7d8c9d1e546d88550aee49de5cc310a82483"
+    },
+    {
+      "path": "static/sw.js",
+      "size": 2354,
+      "sha256": "ee8eff898464ab8a07513889546385f8353be8c59f169bf1161748a40e61b708"
+    },
+    {
+      "path": "static/trust.css",
+      "size": 6806,
+      "sha256": "f85f523caf43cddb668619702b9c34901474be8cf26c28e72a01969774353af8"
+    },
+    {
+      "path": "templates/index.html",
+      "size": 50682,
+      "sha256": "d8710ca42b7d58bbd28d978671b3b3a4b6041240c057ffa53d79fa04f901509d"
+    },
+    {
+      "path": "templates/index_stable.html",
+      "size": 9370,
+      "sha256": "158df7e058ce0976572495a1dc035454dd69109c2e7149c4abf07411e7b4d051"
+    },
+    {
+      "path": "templates/trust.html",
+      "size": 1956,
+      "sha256": "c6c5b467bb3f619b2608e6e6275946843c12ed69d9746adc1e29c176857bd9f2"
+    },
+    {
+      "path": "test_asos_connector.py",
+      "size": 5562,
+      "sha256": "04fb2013baeafc4e2a34fff3c550c95d67954ef2b2fd7c44f8e4f7ff530851b6"
+    },
+    {
+      "path": "test_cdiscount_connector.py",
+      "size": 4680,
+      "sha256": "fd8dd87e5b6cdb0b1096fea287026e6f451c2406026532a4d0a7c05485353e7b"
+    },
+    {
+      "path": "test_product_recognition_v287.py",
+      "size": 1943,
+      "sha256": "28227dbf34e5e4305974e2f3b90d43f1c82a9c0a7f3a6525d226b3354db023dc"
+    },
+    {
+      "path": "test_radar_engine_smoke.py",
+      "size": 4582,
+      "sha256": "7ed601ad6ff349a955d1adc0b093fb105ca0280d2e150737d4354986559cb7c8"
+    },
+    {
+      "path": "test_relevance_v282.py",
+      "size": 1806,
+      "sha256": "4719f4fb7dc9e7de68bcaf71008a145213c29f84704bb6dfe1399e0711fc2de9"
+    },
+    {
+      "path": "test_retail_public_connectors.py",
+      "size": 2936,
+      "sha256": "7de239733542ca83e96c05da47bb3c0bd08f06f0931e5ad893fc2b50b5d22fe2"
+    },
+    {
+      "path": "test_search_intent_v27.py",
+      "size": 3835,
+      "sha256": "464533bebe2c0e244741cb87baaa35639bad295a47d04385c4417c9c6271ad77"
+    },
+    {
+      "path": "test_search_understanding_v288.py",
+      "size": 1490,
+      "sha256": "fa7b21e18000a8cb0e16001812258c05603b0ac82806ef7734d4ac9509ff70ed"
+    },
+    {
+      "path": "test_v301_connector_import.py",
+      "size": 410,
+      "sha256": "0b36d577f44ba71092ac487e9a1d16a7f94b22983fa9578757bee13a7d3ceafc"
+    },
+    {
+      "path": "test_v301_public_release.py",
+      "size": 3943,
+      "sha256": "fd65b5f1ce545f4f6eebbee05a9939c549e20dd4a8dea1824c2a14050207a8bd"
+    },
+    {
+      "path": "test_v302_performance_hotfix.py",
+      "size": 1763,
+      "sha256": "f1baa914f4855d770637d28c0863dd244e18523c335f732fc923f8bd36cb4185"
+    },
+    {
+      "path": "wsgi.py",
+      "size": 87,
+      "sha256": "f10497b6da92fde5761a3a214cf41378fc2fd4e19c66e3bed2f7772d03adeb2e"
+    }
+  ]
+}

@@ -13,8 +13,8 @@ billing = (root / "billing_stripe.py").read_text(encoding="utf-8")
 render = (root / "render.yaml").read_text(encoding="utf-8")
 sites = json.loads((root / "marketplaces" / "sites.json").read_text(encoding="utf-8"))["sites"]
 
-assert 'APP_VERSION = "3.0.1"' in app
-assert 'ASSET_VERSION = "20260815-301"' in app
+assert 'APP_VERSION = "3.0.2"' in app
+assert 'ASSET_VERSION = "20260815-302"' in app
 assert 'fast_limit = 14 if _is_mobile_request() else 18' in app
 assert '"Spartoo", "Footshop", "JD Sports"' in app
 assert '90 if request.endpoint == "expand_results"' in app
@@ -37,15 +37,15 @@ assert 'data-client-filter="low-risk"' in html
 assert 'id="quick-alert"' in html
 assert "['Spartoo','Footshop','JD Sports']" in html
 
-assert 'V3.0.1 — PUBLIC READY' in css
+assert 'V3.0.2 — PUBLIC PERFORMANCE HOTFIX' in css
 assert '.search-panel:before' in css
 assert '.radar-proof' in css
 assert '.recent-query-chip' in css
 assert '.quick-result-chip.featured-action' in css
 assert 'body.radar-focus .main' in css
 
-assert 'luxe-radar-shell-v301' in sw
-assert '20260815-301' in sw
+assert 'luxe-radar-shell-v302' in sw
+assert '20260815-302' in sw
 
 active = {x["name"] for x in sites if x.get("status") == "active"}
 for source in ("Spartoo", "Footshop", "JD Sports", "eBay", "Vinted", "Zalando"):
@@ -70,7 +70,7 @@ assert 'connecteurs actifs testés · 50 résultats par lot' not in html
 # Le ZIP public ne doit jamais inclure de secret local.
 assert not (root / ".env").exists()
 
-print("OK - V3.0.1 public release: UI, anti-spam, stale-token handling, 14 active sources and conservative retail connectors validated.")
+print("OK - V3.0.2 public release: UI, anti-spam, stale-token handling, 14 active sources and conservative retail connectors validated.")
 
 from search_understanding import understand_query
 for query, brand, model in [
@@ -86,4 +86,4 @@ for query, brand, model in [
     understood = understand_query(query)
     assert understood.brand == brand, (query, understood)
     assert understood.model == model, (query, understood)
-print("OK - V3.0.1 typo tolerance sample across major brands validated.")
+print("OK - V3.0.2 typo tolerance sample across major brands validated.")

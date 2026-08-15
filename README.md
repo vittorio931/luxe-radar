@@ -1,6 +1,15 @@
-# LUXE RADAR 3.0.1 — Public Ready
+# LUXE RADAR 3.0.2 — Public Performance Hotfix
 
 LUXE RADAR centralise la recherche de produits mode et sneakers sur plusieurs sources, classe les annonces, conserve les résultats moins sûrs sans les imposer dans le flux recommandé et charge de nouvelles vagues au fil du scroll.
+
+
+## Hotfix V3.0.2
+
+- Zalando échoue maintenant vite : timeout lecture 6 s, sans retry automatique.
+- Après timeout/403/429, un circuit breaker temporaire évite de re-bloquer le scroll.
+- Sur Render, Zalando ne dépasse plus la page 2 et une page d’expansion vide suffit à l’épuiser.
+- Pendant le pipeline initial, l’expansion rapide reste sur eBay pour éviter deux requêtes Zalando concurrentes.
+- Aucun contrôle d’accès Zalando n’est contourné.
 
 ## Version publique
 
@@ -34,7 +43,7 @@ Start command :
 gunicorn --config gunicorn.conf.py wsgi:application
 ```
 
-Health check : `/api/health`
+Health check : `/api/health`  
 Version : `/api/version`
 
 ## Secrets
