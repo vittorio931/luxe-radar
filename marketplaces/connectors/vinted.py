@@ -4,7 +4,7 @@ from marketplaces.connectors.base import MarketplaceConnector
 class VintedConnector(MarketplaceConnector):
     name = "Vinted"
 
-    def search(self, query, price_max, limit=20):
+    def search(self, query, price_max, limit=20, page=1):
         from radar_engine import rechercher_vinted
 
         annonces = rechercher_vinted(
@@ -12,6 +12,7 @@ class VintedConnector(MarketplaceConnector):
             price_max,
             limite=limit,
             headless=True,
+            page=page,
         )
 
         resultats = []
@@ -34,3 +35,6 @@ class VintedConnector(MarketplaceConnector):
             resultats.append(item)
 
         return resultats
+
+    def search_page(self, query, price_max=None, limit=20, page=1):
+        return self.search(query=query, price_max=price_max, limit=limit, page=page)

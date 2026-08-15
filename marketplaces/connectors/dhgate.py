@@ -5,10 +5,10 @@ contient un bloc `<script id="__NEXT_DATA__">` JSON avec les produits dans
 `props.pageProps.data.totalProducts`. Les prix sont fournis sous forme de
 texte affichable (ex. « 42,50 - 56,38 € ») ; on garde la valeur minimale.
 
-Le connecteur est techniquement fonctionnel mais reste désactivé : pour une
-recherche générique type « Nike Trail », la pertinence renvoyée par DHgate est
-faible (titres réécrits, souvent sans la marque demandée) et les résultats ne
-passent pas le filtre de mots du moteur.
+Le connecteur est actif, mais la pertinence finale reste contrôlée par le
+filtre universel du radar. Les titres DHgate peuvent être réécrits ou très SEO ;
+des variantes ciblées sont donc utilisées pour améliorer la couverture sans
+relâcher le contrôle final de type/marque.
 
 Aucun CAPTCHA, 403, mur de connexion ou contrôle anti-bot n'est contourné.
 """
@@ -17,8 +17,8 @@ from __future__ import annotations
 
 import html as html_lib
 import json
+import os
 import re
-import time
 import unicodedata
 from urllib.parse import quote_plus, urljoin
 
@@ -47,14 +47,15 @@ REQUEST_HEADERS = {
     "Accept-Encoding": "identity",
 }
 
-HTTP_CONNECT_TIMEOUT = 4
-HTTP_READ_TIMEOUT = 15
+IS_RENDER = bool(
+    os.environ.get("RENDER")
+    or os.environ.get("RENDER_SERVICE_ID")
+    or os.environ.get("RENDER_EXTERNAL_HOSTNAME")
+    or os.environ.get("LUXE_RADAR_ENV", "").lower() == "production"
+)
+HTTP_CONNECT_TIMEOUT = 2.5 if IS_RENDER else 4
+HTTP_READ_TIMEOUT = 6 if IS_RENDER else 15
 HTTP_TIMEOUT = (HTTP_CONNECT_TIMEOUT, HTTP_READ_TIMEOUT)
-
-# DHgate renvoie parfois des 403 intermittents : une requête sur la page
-# d'accueil avant la recherche stabilise la session.
-WARMUP_URL = f"{BASE_URL}/"
-WARMUP_PAUSE = 1.2
 
 _MAX_ITEMS = 200
 
@@ -110,11 +111,12 @@ def normaliser_texte(texte):
 
 
 def construire_session():
+    retry_budget = 0 if IS_RENDER else 2
     retry = Retry(
-        total=2,
-        connect=2,
-        read=2,
-        status=2,
+        total=retry_budget,
+        connect=retry_budget,
+        read=retry_budget,
+        status=retry_budget,
         backoff_factor=0.45,
         status_forcelist=(429, 500, 502, 503, 504),
         allowed_methods=frozenset({"GET"}),
@@ -267,10 +269,39 @@ def _produit_depuis_next(produit):
     }
 
 
+def _query_variants(query):
+    q = " ".join(str(query or "").split())
+    qn = normaliser_texte(q)
+    qn = re.sub(r"\bessantials\b", "essentials", qn)
+    variants = [q]
+    ensemble = any(word in qn for word in ("ensemble", "tracksuit", "matching set", "set complet", "2 piece", "2pcs"))
+
+    # ESSENTIALS est fréquemment écrit Fear of God Essentials ou FOG Essentials.
+    # On privilégie des variantes qui gardent aussi le type de vêtement demandé.
+    if "essentials" in qn and ensemble:
+        return _dedupe(
+            [
+                q,
+                "Essentials tracksuit",
+                "Fear of God Essentials tracksuit",
+                "FOG Essentials matching set",
+            ]
+        )[:4]
+
+    if ensemble:
+        base = re.sub(r"\b(?:ensemble|tracksuit|matching set|set complet|2 piece|2pcs)\b", " ", qn)
+        base = " ".join(base.split())
+        if base:
+            variants.extend([f"{base} tracksuit", f"{base} matching set"])
+    if "essentials" in qn:
+        variants.extend([qn.replace("essentials", "fear of god essentials"), qn.replace("essentials", "fog essentials")])
+    return _dedupe(v for v in variants if v)[:4]
+
+
 class DHgateConnector(MarketplaceConnector):
     name = "DHgate"
     display_name = "DHgate"
-    enabled = False
+    enabled = True
     currency = "EUR"
 
     def search(
@@ -309,38 +340,24 @@ class DHgateConnector(MarketplaceConnector):
         session = construire_session()
 
         try:
-            try:
-                session.get(
-                    WARMUP_URL,
-                    timeout=HTTP_TIMEOUT,
-                )
-                time.sleep(WARMUP_PAUSE)
-            except requests.RequestException:
-                pass
+            produits = []
+            pages_ok = 0
+            variantes = _query_variants(query)
+            if IS_RENDER:
+                variantes = variantes[:2]
+            for variante in variantes:
+                url = f"{SEARCH_URL}?searchkey={quote_plus(variante)}"
+                response = session.get(url, timeout=HTTP_TIMEOUT)
+                if response.status_code != 200:
+                    print(f"[DHgate] HTTP {response.status_code} sur {variante}")
+                    # Aucun contournement : 403/challenge = arrêt de cette route.
+                    continue
+                pages_ok += 1
+                produits.extend(_extraire_produits_next_data(response.text) or [])
 
-            url = (
-                f"{SEARCH_URL}"
-                f"?searchkey={quote_plus(query)}"
-            )
-
-            response = session.get(
-                url,
-                timeout=HTTP_TIMEOUT,
-            )
-
-            if response.status_code != 200:
-                print(
-                    "[DHgate] "
-                    f"HTTP {response.status_code}"
-                )
+            print(f"[DHgate][DIAG] pages_ok={pages_ok} | candidats={len(produits)}")
+            if not produits:
                 return []
-
-            produits = (
-                _extraire_produits_next_data(
-                    response.text
-                )
-                or []
-            )
 
             resultats = []
             produits_vus = set()

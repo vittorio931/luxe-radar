@@ -23,11 +23,19 @@ services:
       - key: PLAYWRIGHT_BROWSERS_PATH
         value: "0"
       - key: LUXE_RADAR_MULTI_TIMEOUT
-        value: "12"
+        value: "8"
+      - key: LUXE_RADAR_SEARCH_RESULT_LIMIT
+        value: "500"
+      - key: LUXE_RADAR_MAX_CACHED_SEARCHES
+        value: "8"
+      - key: LUXE_RADAR_PROGRESSIVE_WORKERS
+        value: "2"
       - key: LUXE_RADAR_VINTED_TIMEOUT_MS
-        value: "8000"
+        value: "6500"
       - key: LUXE_RADAR_VINTED_SETTLE_MS
-        value: "700"
+        value: "250"
+      - key: LUXE_RADAR_VINTED_TOTAL_SECONDS
+        value: "9"
       - key: WEB_CONCURRENCY
         value: "1"
       - key: EBAY_CLIENT_ID

@@ -4,6 +4,8 @@ import os
 import re
 import unicodedata
 
+from .authenticity import annotate_authenticity
+
 # Filtre volontairement conservateur : il retire surtout les faux positifs
 # évidents. Il ne prétend jamais certifier l'authenticité d'un produit.
 
@@ -69,6 +71,12 @@ EXPLICIT_FAKE_PHRASES = (
 )
 
 
+def _recall_mode_enabled():
+    return str(os.environ.get("LUXE_RADAR_RECALL_MODE", "1")).strip().lower() in {
+        "1", "true", "yes", "on",
+    }
+
+
 def _norm(value):
     text = "" if value is None else str(value)
     text = text.lower().strip()
@@ -113,9 +121,11 @@ def evaluate_result(item, query="", marketplace=""):
         if _has(full, phrase):
             return False, f"annonce à ignorer ({phrase})"
 
-    for phrase in EXPLICIT_FAKE_PHRASES:
-        if _has(full, phrase):
-            return False, f"signal explicite ({phrase})"
+    # V2.8.11 : en couverture maximale, on ne retire plus les vraies cartes
+    # pour simple doute de pertinence. Les filtres de marque/modèle restent
+    # disponibles comme métadonnées et dans l'interface.
+    if _recall_mode_enabled():
+        return True, None
 
     # Nike Trail != Portland Trail Blazers.
     q_tokens = set(re.findall(r"[a-z0-9]+", q))
@@ -149,7 +159,7 @@ def filter_results(results, query="", marketplace=""):
     for item in results or []:
         ok, reason = evaluate_result(item, query=query, marketplace=marketplace)
         if ok:
-            kept.append(item)
+            kept.append(annotate_authenticity(item, marketplace=marketplace))
         elif debug:
             title = item.get("titre") if isinstance(item, dict) else repr(item)
             print(f"[QUALITE] Rejet {marketplace}: {title} -> {reason}")

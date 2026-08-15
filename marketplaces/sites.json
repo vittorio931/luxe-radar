@@ -1,8 +1,8 @@
 {
-  "version": 3,
+  "version": "3.0.1-public",
   "managed_by": "LUXE RADAR MANAGER",
   "generated_from": "https://fromthelabels.com/brands",
-  "generation_policy": "Domaines officiels issus d'un annuaire public mode, dédupliqués et vérifiés DNS/HTTP. Aucun site importé n'est activé.",
+  "generation_policy": "Domaines officiels issus d'un annuaire public mode, dédupliqués et vérifiés DNS/HTTP. Aucun site importé n'est activé. V2.9.0 : catalogue massif exploré par vagues ; les domaines marqués blocked ne sont jamais forcés. V3.0 ajoute trois connecteurs retail publics prudents.",
   "sites": [
     {
       "name": "67behaviour",
@@ -51,6 +51,36 @@
       "supports_image": true,
       "supports_reference": true,
       "notes": "Connecteur dédié existant conservé."
+    },
+    {
+      "name": "Cdiscount",
+      "display_name": "Cdiscount",
+      "base_url": "https://www.cdiscount.com",
+      "category": "Mode multimarques / marketplace",
+      "status": "active",
+      "enabled": true,
+      "connector_type": "dedicated",
+      "currency": "EUR",
+      "country": "FR",
+      "capabilities": {
+        "search": true,
+        "price": true,
+        "image": true,
+        "reference": false
+      },
+      "url": "https://www.cdiscount.com",
+      "domain": "cdiscount.com",
+      "supports_search": true,
+      "supports_price": true,
+      "supports_image": true,
+      "supports_reference": false,
+      "notes": "Connecteur dédié public : pages Cdiscount publiques, JSON-LD + HTML, sans contournement de contrôle d'accès.",
+      "verification": {
+        "source": "https://www.cdiscount.com/chaussures/r-nike%2Btrail.html",
+        "source_verified": true,
+        "query": "Nike Trail",
+        "http_status": 200
+      }
     },
     {
       "name": "Grailed",
@@ -271,6 +301,78 @@
         "source_verified": false,
         "http_status": 429
       }
+    },
+    {
+      "name": "JD Sports",
+      "display_name": "JD Sports",
+      "base_url": "https://www.jdsports.fr",
+      "category": "Sneakers / retail",
+      "status": "active",
+      "enabled": true,
+      "connector_type": "dedicated",
+      "currency": "EUR",
+      "country": "FR",
+      "capabilities": {
+        "search": true,
+        "price": true,
+        "image": true,
+        "reference": true
+      },
+      "url": "https://www.jdsports.fr",
+      "domain": "jdsports.fr",
+      "supports_search": true,
+      "supports_price": true,
+      "supports_image": true,
+      "supports_reference": true,
+      "notes": "Connecteur retail public V3.0 : JSON-LD Product + fallback HTML conservateur, sans contournement de contrôle d'accès."
+    },
+    {
+      "name": "Footshop",
+      "display_name": "Footshop",
+      "base_url": "https://www.footshop.eu",
+      "category": "Sneakers / retail",
+      "status": "active",
+      "enabled": true,
+      "connector_type": "dedicated",
+      "currency": "EUR",
+      "country": "EU",
+      "capabilities": {
+        "search": true,
+        "price": true,
+        "image": true,
+        "reference": true
+      },
+      "url": "https://www.footshop.eu",
+      "domain": "footshop.eu",
+      "supports_search": true,
+      "supports_price": true,
+      "supports_image": true,
+      "supports_reference": true,
+      "notes": "Connecteur retail public V3.0 : JSON-LD Product + fallback HTML conservateur, sans contournement de contrôle d'accès."
+    },
+    {
+      "name": "Spartoo",
+      "display_name": "Spartoo",
+      "base_url": "https://www.spartoo.com",
+      "category": "Mode multimarques / marketplace",
+      "status": "active",
+      "enabled": true,
+      "connector_type": "dedicated",
+      "currency": "EUR",
+      "country": "FR",
+      "capabilities": {
+        "search": true,
+        "price": true,
+        "image": true,
+        "reference": true
+      },
+      "url": "https://www.spartoo.com",
+      "domain": "spartoo.com",
+      "supports_search": true,
+      "supports_price": true,
+      "supports_image": true,
+      "supports_reference": true,
+      "notes": "Connecteur retail public V3.0 : JSON-LD Product + fallback HTML conservateur, sans contournement de contrôle d'accès."
     },
     {
       "name": "Aprajita Toor",
@@ -4878,25 +4980,27 @@
       "category": "Grossistes mode",
       "country": "CN",
       "currency": "CNY",
-      "notes": "Connecteur dédié désactivé et non validé pour une recherche conforme.",
+      "notes": "Connecteur dédié expérimental sur la recherche web publique s.1688.com. Variantes chinoises pour types de produits, conversion CNY->EUR, arrêt propre si vérification/connexion. Aucun contournement de contrôle d’accès.",
       "base_url": "https://www.1688.com",
       "domain": "1688.com",
-      "enabled": false,
-      "status": "off",
+      "enabled": true,
+      "status": "active",
       "connector_type": "dedicated",
-      "supports_search": false,
-      "supports_price": false,
-      "supports_image": false,
+      "supports_search": true,
+      "supports_price": true,
+      "supports_image": true,
       "supports_reference": false,
       "capabilities": {
-        "search": false,
-        "price": false,
-        "image": false,
+        "search": true,
+        "price": true,
+        "image": true,
         "reference": false
       },
       "verification": {
-        "source": "LUXE RADAR existing dedicated connector",
-        "http_status": null
+        "source": "https://www.1688.com",
+        "query": "ensemble Essentials",
+        "tested": false,
+        "note": "Parseur testé hors réseau ; validation live à faire sur le PC utilisateur."
       }
     },
     {
@@ -5064,8 +5168,8 @@
       "category": "Marketplaces / grossistes",
       "country": "CN",
       "currency": "EUR",
-      "enabled": false,
-      "status": "to_test",
+      "enabled": true,
+      "status": "active",
       "connector_type": "dedicated",
       "supports_search": true,
       "supports_price": true,
@@ -5077,7 +5181,7 @@
         "image": true,
         "reference": false
       },
-      "notes": "Connecteur dédié HTTP fonctionnel (JSON __NEXT_DATA__, ~50 produits). Reste OFF : pertinence faible pour Nike Trail (titres réécrits sans la marque, ex. rain boots) et résultats écartés par le filtre de mots du moteur. Warm-up de la page d'accueil requis contre les 403 intermittents.",
+      "notes": "Connecteur dédié sur recherche publique DHgate (__NEXT_DATA__). Activé avec filtrage de pertinence global et avertissements d’authenticité. Aucun warm-up anti-403 ni contournement : une route refusée est ignorée.",
       "verification": {
         "source": "https://www.dhgate.com",
         "query": "Nike Trail",
@@ -12212,8 +12316,8 @@
       "category": "Retailers multimarques",
       "country": "DE",
       "currency": "EUR",
-      "enabled": false,
-      "status": "to_test",
+      "enabled": true,
+      "status": "active",
       "connector_type": "dedicated",
       "supports_search": true,
       "supports_price": true,
@@ -12225,7 +12329,7 @@
         "image": true,
         "reference": false
       },
-      "notes": "Connecteur dédié HTTP fonctionnel (cartes <article> servies côté serveur, titre/prix EUR/image). Reste to_test : les titres visibles pour Nike Trail omettent « trail » (ex. COSMIC RUNNER) et sont donc écartés par le filtre de mots du moteur.",
+      "notes": "Connecteur dédié public activé en V2.9.0 ; pagination progressive supportée, sans contournement de contrôle d’accès.",
       "verification": {
         "source": "https://www.zalando.fr",
         "query": "Nike Trail",
@@ -34164,6 +34268,35 @@
         "source": "https://fromthelabels.com/brands",
         "source_verified": false,
         "http_status": 429
+      }
+    },
+    {
+      "name": "Hacoo",
+      "url": "https://www.hacoo.app",
+      "base_url": "https://www.hacoo.app",
+      "domain": "hacoo.app",
+      "category": "Marketplaces / mode",
+      "country": "ES",
+      "currency": "EUR",
+      "enabled": false,
+      "status": "to_test",
+      "connector_type": "dedicated",
+      "supports_search": false,
+      "supports_price": false,
+      "supports_image": false,
+      "supports_reference": false,
+      "capabilities": {
+        "search": false,
+        "price": false,
+        "image": false,
+        "reference": false
+      },
+      "notes": "Connecteur dédié présent mais non activé : le parcours produit public stable n’est pas disponible sur le web ; la commande officielle passe par l’application. Aucune API privée/session connectée n’est utilisée.",
+      "verification": {
+        "source": "https://www.hacoo.app",
+        "tested": true,
+        "http_status": 200,
+        "note": "Site public vérifié ; recherche produit web non validée."
       }
     }
   ]

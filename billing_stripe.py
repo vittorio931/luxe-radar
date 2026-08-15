@@ -36,8 +36,15 @@ def secret_key():
 
 
 def billing_ready():
-    """Le paiement est prêt dès qu'une clé secrète Stripe est configurée."""
-    return bool(secret_key())
+    """Paiement désactivé par défaut en production.
+
+    Une clé Stripe présente ne suffit volontairement pas à activer le checkout :
+    l'opérateur doit aussi définir LUXE_RADAR_BILLING_ENABLED=1 après avoir
+    branché la confirmation serveur (webhook/provisionnement). Cela évite tout
+    débit accidentel pendant une mise en ligne du Radar.
+    """
+    enabled = (os.environ.get("LUXE_RADAR_BILLING_ENABLED") or "").strip().lower() in {"1", "true", "yes", "on"}
+    return enabled and bool(secret_key())
 
 
 def price_euros(plan, cycle):

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 import json
 import os
 import re
@@ -23,6 +24,7 @@ IS_RENDER = bool(
     os.environ.get("RENDER")
     or os.environ.get("RENDER_SERVICE_ID")
     or os.environ.get("RENDER_EXTERNAL_HOSTNAME")
+    or os.environ.get("LUXE_RADAR_ENV", "").lower() == "production"
 )
 HTTP_CONNECT_TIMEOUT = 2.5 if IS_RENDER else 4
 HTTP_READ_TIMEOUT = 5 if IS_RENDER else 12
@@ -227,6 +229,12 @@ def extraire_produits_jsonld(texte_html):
     return produits
 
 
+def _recall_mode_enabled():
+    return str(os.environ.get("LUXE_RADAR_RECALL_MODE", "1")).strip().lower() in {
+        "1", "true", "yes", "on",
+    }
+
+
 class SSENSEConnector(MarketplaceConnector):
     name = "SSENSE"
     display_name = "SSENSE"
@@ -280,7 +288,7 @@ class SSENSEConnector(MarketplaceConnector):
             else:
                 titre = nom
 
-            if not _titre_correspond(titre, query):
+            if not _recall_mode_enabled() and not _titre_correspond(titre, query):
                 continue
 
             prix = produit.get("prix")

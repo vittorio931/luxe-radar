@@ -1,0 +1,38 @@
+LUXE RADAR V3.0.1 — CHECKLIST MISE EN PUBLIC
+============================================
+
+AVANT PUSH
+[ ] Le ZIP a été extrait avec app_web.py directement à la racine.
+[ ] Aucun .env, .pem ou .key n'est présent dans le dépôt.
+[ ] /api/version doit annoncer 3.0.1 et asset 20260815-301.
+[ ] Test local : Nike P-6000.
+[ ] Test local : On Cloud 5.
+[ ] Test local : Columbia Tech Wind.
+[ ] Vérifier le scroll sur plusieurs vagues et l'absence de rafale 429.
+[ ] Vérifier Favoris, Faible risque, Bons plans et Créer une alerte.
+[ ] Vérifier PC + mobile.
+
+RENDER
+Build : python -m pip install -r requirements.txt && python -m playwright install chromium
+Start : gunicorn --config gunicorn.conf.py wsgi:application
+Health : /api/health
+
+Variables minimales / importantes
+- LUXE_RADAR_ENV=production
+- PLAYWRIGHT_BROWSERS_PATH=0
+- WEB_CONCURRENCY=1
+- EBAY_CLIENT_ID=<secret Render>
+- EBAY_CLIENT_SECRET=<secret Render>
+- LUXE_RADAR_SECRET_KEY=<générée par Render>
+
+PAIEMENT
+- Ne PAS définir LUXE_RADAR_BILLING_ENABLED=1 pour cette mise en public.
+- Le checkout reste volontairement OFF tant que webhooks + provisionnement ne sont pas finalisés.
+
+APRÈS DÉPLOIEMENT
+[ ] /api/health = 200.
+[ ] /api/version = 3.0.1 / 20260815-301.
+[ ] Faire un Ctrl+F5 une fois si l'ancien service worker reste en cache.
+[ ] Tester une recherche réelle et ouvrir au moins une annonce.
+[ ] Tester le scroll sur mobile.
+[ ] Vérifier qu'une source bloquée n'empêche pas les autres de répondre.

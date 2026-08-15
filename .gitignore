@@ -37,3 +37,5 @@ media/
 
 # Archive des données produit (fichier source, non chargé au runtime)
 modeles.zip
+
+.env

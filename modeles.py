@@ -1,447 +1,235 @@
-MARQUES_MODELES = {
-
-    "Nike": {
-        "Air Force 1": [
-            "air force 1",
-            "air force one",
-            "af1"
-        ],
-        "Air Max 1": [
-            "air max 1",
-            "airmax 1"
-        ],
-        "Air Max 90": [
-            "air max 90",
-            "airmax 90"
-        ],
-        "Air Max 95": [
-            "air max 95",
-            "airmax 95"
-        ],
-        "Air Max 97": [
-            "air max 97",
-            "airmax 97"
-        ],
-        "Air Max Plus": [
-            "air max plus",
-            "air max tn",
-            "tn",
-            "tn air"
-        ],
-        "Dunk": [
-            "dunk",
-            "dunk low",
-            "dunk high"
-        ],
-        "Vomero 5": [
-            "vomero 5",
-            "vomero5"
-        ],
-        "P-6000": [
-            "p 6000",
-            "p6000",
-            "p-6000"
-        ],
-        "Shox": [
-            "shox",
-            "shox tl"
-        ],
-        "Pegasus": [
-            "pegasus",
-            "pegasus 40",
-            "pegasus 41"
-        ],
-    },
-
-
-    "Adidas": {
-        "Samba": [
-            "samba",
-            "samba og"
-        ],
-        "Gazelle": [
-            "gazelle",
-            "gazelle indoor"
-        ],
-        "Campus": [
-            "campus",
-            "campus 00s",
-            "campus 00"
-        ],
-        "Handball Spezial": [
-            "handball spezial",
-            "spezial"
-        ],
-        "Forum": [
-            "forum",
-            "forum low"
-        ],
-        "Superstar": [
-            "superstar"
-        ],
-        "Stan Smith": [
-            "stan smith"
-        ],
-        "Ultraboost": [
-            "ultraboost",
-            "ultra boost"
-        ],
-        "NMD": [
-            "nmd"
-        ],
-        "Yeezy": [
-            "yeezy",
-            "yeezy boost",
-            "yeezy 350",
-            "yeezy 500",
-            "yeezy 700"
-        ],
-    },
-
-
-    "Jordan": {
-        "Air Jordan 1": [
-            "air jordan 1",
-            "jordan 1",
-            "aj1"
-        ],
-        "Air Jordan 3": [
-            "air jordan 3",
-            "jordan 3",
-            "aj3"
-        ],
-        "Air Jordan 4": [
-            "air jordan 4",
-            "jordan 4",
-            "aj4"
-        ],
-        "Air Jordan 5": [
-            "air jordan 5",
-            "jordan 5",
-            "aj5"
-        ],
-        "Air Jordan 11": [
-            "air jordan 11",
-            "jordan 11",
-            "aj11"
-        ],
-    },
-
-
-    "New Balance": {
-        "550": [
-            "new balance 550",
-            "nb 550"
-        ],
-        "530": [
-            "new balance 530",
-            "nb 530"
-        ],
-        "574": [
-            "new balance 574",
-            "nb 574"
-        ],
-        "2002R": [
-            "new balance 2002r",
-            "2002r",
-            "2002 r"
-        ],
-        "9060": [
-            "new balance 9060",
-            "nb 9060",
-            "9060"
-        ],
-        "990": [
-            "new balance 990",
-            "nb 990"
-        ],
-        "991": [
-            "new balance 991",
-            "nb 991"
-        ],
-    },
-
-
-    "Asics": {
-        "Gel-Kayano 14": [
-            "gel kayano 14",
-            "kayano 14",
-            "kayano14"
-        ],
-        "Gel-1130": [
-            "gel 1130",
-            "gel-1130",
-            "1130"
-        ],
-        "Gel-NYC": [
-            "gel nyc",
-            "gel-nyc"
-        ],
-        "Gel-Lyte III": [
-            "gel lyte 3",
-            "gel lyte iii"
-        ],
-    },
-
-
-    "Salomon": {
-        "XT-6": [
-            "xt 6",
-            "xt-6",
-            "xt6"
-        ],
-        "XT-4": [
-            "xt 4",
-            "xt-4",
-            "xt4"
-        ],
-        "ACS Pro": [
-            "acs pro",
-            "acs"
-        ],
-        "Speedcross": [
-            "speedcross",
-            "speedcross 5",
-            "speedcross 6"
-        ],
-    },
-
-
-    "On": {
-        "Cloud": [
-            "on cloud",
-            "cloud"
-        ],
-        "Cloud 5": [
-            "cloud 5",
-            "cloud 5 on"
-        ],
-        "Cloudmonster": [
-            "cloudmonster",
-            "cloud monster"
-        ],
-        "Cloudswift": [
-            "cloudswift",
-            "cloud swift"
-        ],
-    },
-
-
-    "Under Armour": {
-        "Hybrid": [
-            "under armour hybrid",
-            "ua hybrid",
-            "hybrid pants",
-            "hybrid pantalon"
-        ],
-        "Curry": [
-            "curry",
-            "curry flow"
-        ],
-        "HOVR": [
-            "hovr",
-            "hovr phantom"
-        ],
-    },
-
-
-    "Stone Island": {
-        "T-shirt": [
-            "stone island t shirt",
-            "stone island tee",
-            "stone island tshirt"
-        ],
-        "Polo": [
-            "stone island polo"
-        ],
-        "Sweat": [
-            "stone island sweat",
-            "stone island sweatshirt",
-            "stone island hoodie"
-        ],
-        "Pull": [
-            "stone island pull",
-            "stone island knit"
-        ],
-        "Veste": [
-            "stone island veste",
-            "stone island jacket"
-        ],
-        "Pantalon": [
-            "stone island pantalon",
-            "stone island pants"
-        ],
-        "Cargo": [
-            "stone island cargo"
-        ],
-        "Short": [
-            "stone island short",
-            "stone island shorts"
-        ],
-    },
-
-
-    "C.P. Company": {
-        "Goggle Jacket": [
-            "cp company goggle",
-            "c.p. company goggle",
-            "goggle jacket"
-        ],
-        "Overshirt": [
-            "cp company overshirt",
-            "c.p. company overshirt"
-        ],
-    },
-
-
-    "Ralph Lauren": {
-        "Polo": [
-            "ralph lauren polo",
-            "polo ralph lauren"
-        ],
-        "Chemise": [
-            "ralph lauren shirt",
-            "ralph lauren chemise"
-        ],
-        "Quarter Zip": [
-            "ralph lauren quarter zip",
-            "polo quarter zip"
-        ],
-    },
-
-
-    "Lacoste": {
-        "Polo": [
-            "lacoste polo",
-            "polo lacoste"
-        ],
-        "Sweat": [
-            "lacoste sweat",
-            "lacoste sweatshirt"
-        ],
-        "T-shirt": [
-            "lacoste t shirt",
-            "lacoste tee"
-        ],
-    },
-
-
-    "The North Face": {
-        "Nuptse": [
-            "north face nuptse",
-            "nuptse"
-        ],
-        "1996 Nuptse": [
-            "1996 nuptse",
-            "1996 north face"
-        ],
-        "Denali": [
-            "north face denali",
-            "denali"
-        ],
-        "Himalayan": [
-            "north face himalayan",
-            "himalayan"
-        ],
-    },
-
-
-    "Patagonia": {
-        "Retro-X": [
-            "patagonia retro x",
-            "retro-x",
-            "retro x"
-        ],
-        "Synchilla": [
-            "patagonia synchilla",
-            "synchilla"
-        ],
-        "Down Sweater": [
-            "patagonia down sweater"
-        ],
-    },
-
-
-    "Carhartt WIP": {
-        "Detroit Jacket": [
-            "carhartt detroit",
-            "carhartt wip detroit",
-            "detroit jacket"
-        ],
-        "Active Jacket": [
-            "carhartt active jacket",
-            "carhartt wip active"
-        ],
-        "Michigan Coat": [
-            "carhartt michigan",
-            "michigan coat"
-        ],
-        "Cargo": [
-            "carhartt cargo",
-            "carhartt wip cargo"
-        ],
-    },
-
-
-    "Tommy Hilfiger": {
-        "Polo": [
-            "tommy hilfiger polo",
-            "tommy polo"
-        ],
-        "Quarter Zip": [
-            "tommy hilfiger quarter zip",
-            "tommy quarter zip"
-        ],
-        "Chemise": [
-            "tommy hilfiger shirt",
-            "tommy hilfiger chemise"
-        ],
-    },
-
-
-    "Fred Perry": {
-        "Polo": [
-            "fred perry polo",
-            "fred perry m12",
-            "m12"
-        ],
-        "Sweat": [
-            "fred perry sweat"
-        ],
-    },
-
-
-    "Moncler": {
-        "Maya": [
-            "moncler maya",
-            "maya moncler"
-        ],
-        "Montbeliard": [
-            "moncler montbeliard"
-        ],
-        "Grenoble": [
-            "moncler grenoble"
-        ],
-    },
-
-
-    "Canada Goose": {
-        "Expedition": [
-            "canada goose expedition",
-            "expedition"
-        ],
-        "Langford": [
-            "canada goose langford",
-            "langford"
-        ],
-        "Chilliwack": [
-            "canada goose chilliwack",
-            "chilliwack"
-        ],
-        "Hybridge": [
-            "canada goose hybridge",
-            "hybridge"
-        ],
-    },
-
-}
+MARQUES_MODELES = {'Nike': {'Air Force 1': ['air force 1', 'air force one', 'af1'],
+          'Air Max 1': ['air max 1', 'airmax 1'],
+          'Air Max 90': ['air max 90', 'airmax 90'],
+          'Air Max 95': ['air max 95', 'airmax 95'],
+          'Air Max 97': ['air max 97', 'airmax 97'],
+          'Air Max Plus': ['air max plus', 'air max tn', 'tn', 'tn air'],
+          'Dunk': ['dunk', 'dunk low', 'dunk high'],
+          'Vomero 5': ['vomero 5', 'vomero5'],
+          'P-6000': ['p 6000', 'p6000', 'p-6000'],
+          'Shox': ['shox', 'shox tl'],
+          'Pegasus': ['pegasus', 'pegasus 40', 'pegasus 41'],
+          'Trail': ['nike trail', 'nike running trail', 'nike dri fit trail', 'nike dri-fit trail', 'trail running'],
+          'Miler': ['nike miler', 'nike running miler', 'miler'],
+          'Phenom Elite': ['nike phenom elite', 'phenom elite', 'phenom elite pants', 'phenom elite running pants'],
+          'Dri-FIT ADV': ['nike dri fit adv', 'nike dri-fit adv', 'dri fit adv']},
+ 'Adidas': {'Samba': ['samba', 'samba og'],
+            'Gazelle': ['gazelle', 'gazelle indoor'],
+            'Campus': ['campus', 'campus 00s', 'campus 00'],
+            'Handball Spezial': ['handball spezial', 'spezial'],
+            'Forum': ['forum', 'forum low'],
+            'Superstar': ['superstar'],
+            'Stan Smith': ['stan smith'],
+            'Ultraboost': ['ultraboost', 'ultra boost'],
+            'NMD': ['nmd'],
+            'Yeezy': ['yeezy', 'yeezy boost', 'yeezy 350', 'yeezy 500', 'yeezy 700']},
+ 'Jordan': {'Air Jordan 1': ['air jordan 1', 'jordan 1', 'aj1'],
+            'Air Jordan 3': ['air jordan 3', 'jordan 3', 'aj3'],
+            'Air Jordan 4': ['air jordan 4', 'jordan 4', 'aj4'],
+            'Air Jordan 5': ['air jordan 5', 'jordan 5', 'aj5'],
+            'Air Jordan 11': ['air jordan 11', 'jordan 11', 'aj11']},
+ 'New Balance': {'550': ['new balance 550', 'nb 550'],
+                 '530': ['new balance 530', 'nb 530'],
+                 '574': ['new balance 574', 'nb 574'],
+                 '2002R': ['new balance 2002r', '2002r', '2002 r'],
+                 '9060': ['new balance 9060', 'nb 9060', '9060'],
+                 '990': ['new balance 990', 'nb 990'],
+                 '991': ['new balance 991', 'nb 991']},
+ 'Asics': {'Gel-Kayano 14': ['gel kayano 14', 'kayano 14', 'kayano14'],
+           'Gel-1130': ['gel 1130', 'gel-1130', '1130'],
+           'Gel-NYC': ['gel nyc', 'gel-nyc'],
+           'Gel-Lyte III': ['gel lyte 3', 'gel lyte iii']},
+ 'Salomon': {'XT-6': ['xt 6', 'xt-6', 'xt6'],
+             'XT-4': ['xt 4', 'xt-4', 'xt4'],
+             'ACS Pro': ['acs pro', 'acs'],
+             'Speedcross': ['speedcross', 'speedcross 5', 'speedcross 6']},
+ 'On': {'Cloud': ['on cloud', 'cloud'],
+        'Cloud 5': ['cloud 5', 'cloud 5 on', 'on cloud 5'],
+        'Cloud 6': ['cloud 6', 'cloud6', 'on cloud 6'],
+        'Cloud X': ['cloud x', 'on cloud x'],
+        'Cloud X 4': ['cloud x 4', 'cloudx 4', 'cloud x4', 'on cloud x 4'],
+        'Cloud X 5': ['cloud x 5', 'cloudx 5', 'cloud x5', 'on cloud x 5'],
+        'Cloudmonster': ['cloudmonster', 'cloud monster'],
+        'Cloudmonster 2': ['cloudmonster 2', 'cloud monster 2'],
+        'Cloudswift': ['cloudswift', 'cloud swift'],
+        'Cloudtilt': ['on cloudtilt', 'cloudtilt', 'cloud tilt'],
+        'Cloudsurfer': ['on cloudsurfer', 'cloudsurfer', 'cloud surfer'],
+        'Cloudnova': ['on cloudnova', 'cloudnova', 'cloud nova'],
+        'Cloudrunner': ['on cloudrunner', 'cloudrunner', 'cloud runner'],
+        'Cloudventure': ['on cloudventure', 'cloudventure', 'cloud venture'],
+        'Cloudultra': ['on cloudultra', 'cloudultra', 'cloud ultra'],
+        'Cloudboom': ['on cloudboom', 'cloudboom', 'cloud boom'],
+        'Cloudflow': ['on cloudflow', 'cloudflow', 'cloud flow'],
+        'Cloudpulse': ['on cloudpulse', 'cloudpulse', 'cloud pulse'],
+        'Cloudaway': ['on cloudaway', 'cloudaway', 'cloud away'],
+        'Cloudgo': ['on cloudgo', 'cloudgo', 'cloud go'],
+        'Cloudvista': ['on cloudvista', 'cloudvista', 'cloud vista'],
+        'Cloudhorizon': ['on cloudhorizon', 'cloudhorizon', 'cloud horizon'],
+        'Cloudrock': ['on cloudrock', 'cloudrock', 'cloud rock'],
+        'Cloudeclipse': ['on cloudeclipse', 'cloudeclipse', 'cloud eclipse'],
+        'Cloudstratus': ['on cloudstratus', 'cloudstratus', 'cloud stratus']},
+ 'Under Armour': {'Hybrid': ['under armour hybrid', 'ua hybrid', 'hybrid pants', 'hybrid pantalon'],
+                  'Curry': ['curry', 'curry flow'],
+                  'HOVR': ['hovr', 'hovr phantom']},
+ 'Stone Island': {'T-shirt': ['stone island t shirt', 'stone island tee', 'stone island tshirt'],
+                  'Polo': ['stone island polo'],
+                  'Sweat': ['stone island sweat', 'stone island sweatshirt', 'stone island hoodie'],
+                  'Pull': ['stone island pull', 'stone island knit'],
+                  'Veste': ['stone island veste', 'stone island jacket'],
+                  'Pantalon': ['stone island pantalon', 'stone island pants'],
+                  'Cargo': ['stone island cargo'],
+                  'Short': ['stone island short', 'stone island shorts']},
+ 'C.P. Company': {'Goggle Jacket': ['cp company goggle', 'c.p. company goggle', 'goggle jacket'],
+                  'Overshirt': ['cp company overshirt', 'c.p. company overshirt']},
+ 'Ralph Lauren': {'Polo': ['ralph lauren polo', 'polo ralph lauren'],
+                  'Chemise': ['ralph lauren shirt', 'ralph lauren chemise'],
+                  'Quarter Zip': ['ralph lauren quarter zip', 'polo quarter zip']},
+ 'Lacoste': {'Polo': ['lacoste polo', 'polo lacoste'],
+             'Sweat': ['lacoste sweat', 'lacoste sweatshirt'],
+             'T-shirt': ['lacoste t shirt', 'lacoste tee']},
+ 'The North Face': {'Nuptse': ['north face nuptse', 'nuptse'],
+                    '1996 Nuptse': ['1996 nuptse', '1996 north face'],
+                    'Denali': ['north face denali', 'denali'],
+                    'Himalayan': ['north face himalayan', 'himalayan']},
+ 'Patagonia': {'Retro-X': ['patagonia retro x', 'retro-x', 'retro x'],
+               'Synchilla': ['patagonia synchilla', 'synchilla'],
+               'Down Sweater': ['patagonia down sweater']},
+ 'Carhartt WIP': {'Detroit Jacket': ['carhartt detroit', 'carhartt wip detroit', 'detroit jacket'],
+                  'Active Jacket': ['carhartt active jacket', 'carhartt wip active'],
+                  'Michigan Coat': ['carhartt michigan', 'michigan coat'],
+                  'Cargo': ['carhartt cargo', 'carhartt wip cargo']},
+ 'Tommy Hilfiger': {'Polo': ['tommy hilfiger polo', 'tommy polo'],
+                    'Quarter Zip': ['tommy hilfiger quarter zip', 'tommy quarter zip'],
+                    'Chemise': ['tommy hilfiger shirt', 'tommy hilfiger chemise']},
+ 'Fred Perry': {'Polo': ['fred perry polo', 'fred perry m12', 'm12'], 'Sweat': ['fred perry sweat']},
+ 'Moncler': {'Maya': ['moncler maya', 'maya moncler'],
+             'Montbeliard': ['moncler montbeliard'],
+             'Grenoble': ['moncler grenoble']},
+ 'Canada Goose': {'Expedition': ['canada goose expedition', 'expedition'],
+                  'Langford': ['canada goose langford', 'langford'],
+                  'Chilliwack': ['canada goose chilliwack', 'chilliwack'],
+                  'Hybridge': ['canada goose hybridge', 'hybridge']},
+ 'Essentials': {'Hoodie': ['essentials hoodie',
+                           'fear of god essentials hoodie',
+                           'fog essentials hoodie',
+                           'essentials sweat a capuche'],
+                'Sweat': ['essentials sweat', 'essentials sweatshirt', 'fear of god essentials sweatshirt'],
+                'T-shirt': ['essentials t shirt', 'essentials tshirt', 'essentials tee', 'fear of god essentials tee'],
+                'Pantalon': ['essentials pantalon',
+                             'essentials pants',
+                             'essentials sweatpants',
+                             'essentials jogger',
+                             'fear of god essentials sweatpant'],
+                'Short': ['essentials short', 'essentials shorts', 'essentials sweatshort'],
+                'Ensemble': ['essentials ensemble',
+                             'essentials set',
+                             'essentials tracksuit',
+                             'essentials matching set',
+                             'essentials co ord',
+                             'essentials two piece',
+                             'essentials 2 piece',
+                             'essentials 2pcs',
+                             'essentials hoodie joggers',
+                             'essentials hoodie sweatpants',
+                             'essentials hoodie pants',
+                             'essentials sweatshirt joggers',
+                             'fear of god essentials ensemble',
+                             'fear of god essentials set',
+                             'fear of god essentials tracksuit',
+                             'fear of god essentials matching set',
+                             'fear of god essentials hoodie joggers',
+                             'fear of god essentials hoodie sweatpants',
+                             'fog essentials set',
+                             'fog essentials tracksuit'],
+                'Veste': ['essentials jacket', 'essentials track jacket', 'fear of god essentials jacket']},
+ 'Columbia': {'Bugaboo': ['columbia bugaboo', 'bugaboo'],
+              'Powder Lite': ['columbia powder lite', 'powder lite'],
+              'Pike Lake': ['columbia pike lake', 'pike lake'],
+              'Watertight II': ['columbia watertight ii', 'watertight 2', 'watertight ii'],
+              'Silver Ridge': ['columbia silver ridge', 'silver ridge'],
+              'Steens Mountain': ['columbia steens mountain', 'steens mountain'],
+              'Newton Ridge': ['columbia newton ridge', 'newton ridge'],
+              'Peakfreak': ['columbia peakfreak', 'peakfreak'],
+              'Konos': ['columbia konos', 'konos']},
+ 'Hoka': {'Clifton': ['hoka clifton', 'clifton 9', 'clifton'],
+          'Bondi': ['hoka bondi', 'bondi 8', 'bondi'],
+          'Speedgoat': ['hoka speedgoat', 'speedgoat 5', 'speedgoat 6', 'speedgoat'],
+          'Mafate': ['hoka mafate', 'mafate speed', 'mafate'],
+          'Challenger': ['hoka challenger', 'challenger atr', 'challenger'],
+          'Transport': ['hoka transport', 'transport'],
+          'Mach': ['hoka mach', 'mach 6', 'mach']},
+ 'Saucony': {'ProGrid Omni 9': ['saucony progrid omni 9', 'progrid omni 9', 'omni 9'],
+             'Ride': ['saucony ride', 'ride 17', 'ride'],
+             'Triumph': ['saucony triumph', 'triumph 22', 'triumph'],
+             'Endorphin': ['saucony endorphin', 'endorphin speed', 'endorphin pro'],
+             'Shadow 6000': ['saucony shadow 6000', 'shadow 6000'],
+             'Jazz': ['saucony jazz', 'jazz original']},
+ "Arc'teryx": {'Beta': ['arcteryx beta', 'arc teryx beta', 'beta jacket'],
+               'Alpha': ['arcteryx alpha', 'arc teryx alpha', 'alpha jacket'],
+               'Atom': ['arcteryx atom', 'arc teryx atom', 'atom hoody'],
+               'Cerium': ['arcteryx cerium', 'arc teryx cerium', 'cerium'],
+               'Gamma': ['arcteryx gamma', 'arc teryx gamma', 'gamma'],
+               'Squamish': ['arcteryx squamish', 'arc teryx squamish', 'squamish'],
+               'Norvan': ['arcteryx norvan', 'arc teryx norvan', 'norvan']},
+ 'Puma': {'Speedcat': ['puma speedcat', 'speedcat'],
+          'Suede': ['puma suede', 'suede classic'],
+          'Palermo': ['puma palermo', 'palermo'],
+          'RS-X': ['puma rs x', 'rs-x', 'rsx']},
+ 'Reebok': {'Club C': ['reebok club c', 'club c 85', 'club c'],
+            'Classic Leather': ['reebok classic leather', 'classic leather'],
+            'Instapump Fury': ['reebok instapump fury', 'instapump fury'],
+            'Premier Road': ['reebok premier road', 'premier road']},
+ 'Converse': {'Chuck Taylor 70': ['converse chuck 70', 'chuck 70', 'chuck taylor 70'],
+              'Run Star Hike': ['converse run star hike', 'run star hike'],
+              'One Star': ['converse one star', 'one star']},
+ 'Vans': {'Old Skool': ['vans old skool', 'old skool'],
+          'Knu Skool': ['vans knu skool', 'knu skool'],
+          'Sk8-Hi': ['vans sk8 hi', 'sk8-hi', 'sk8 hi'],
+          'Authentic': ['vans authentic', 'authentic']},
+ 'Timberland': {'6-Inch Premium': ['timberland 6 inch', '6 inch premium', 'premium 6 inch'],
+                'Euro Hiker': ['timberland euro hiker', 'euro hiker']},
+ 'Dr. Martens': {'1460': ['dr martens 1460', 'doc martens 1460', '1460'],
+                 '1461': ['dr martens 1461', 'doc martens 1461', '1461'],
+                 'Adrian': ['dr martens adrian', 'adrian loafer', 'adrian']},
+ 'Mizuno': {'Wave Rider': ['mizuno wave rider', 'wave rider'],
+            'Wave Prophecy': ['mizuno wave prophecy', 'wave prophecy'],
+            'Wave Mujin': ['mizuno wave mujin', 'wave mujin']},
+ 'Brooks': {'Ghost': ['brooks ghost', 'ghost 16', 'ghost'],
+            'Glycerin': ['brooks glycerin', 'glycerin'],
+            'Adrenaline GTS': ['brooks adrenaline gts', 'adrenaline gts']},
+ 'Merrell': {'Moab': ['merrell moab', 'moab 3', 'moab'],
+             'Hydro Moc': ['merrell hydro moc', 'hydro moc'],
+             'Agility Peak': ['merrell agility peak', 'agility peak']},
+ 'Barbour': {'Bedale': ['barbour bedale', 'bedale'],
+             'Beaufort': ['barbour beaufort', 'beaufort'],
+             'Ashby': ['barbour ashby', 'ashby']},
+ 'Helly Hansen': {'Crew': ['helly hansen crew', 'crew jacket'],
+                  'Lifa': ['helly hansen lifa', 'lifa'],
+                  'Alpha': ['helly hansen alpha', 'alpha jacket']},
+ 'Napapijri': {'Rainforest': ['napapijri rainforest', 'rainforest'], 'Skidoo': ['napapijri skidoo', 'skidoo']},
+ 'Kappa': {},
+ 'Umbro': {},
+ 'Gore Wear': {},
+ 'Rab': {},
+ 'Mammut': {},
+ 'Fjallraven': {},
+ 'Jack Wolfskin': {},
+ 'Peak Performance': {},
+ 'Oakley': {},
+ 'Diesel': {},
+ 'Burberry': {},
+ 'Palm Angels': {},
+ 'Ami Paris': {},
+ 'Jacquemus': {},
+ 'Acne Studios': {},
+ 'Off-White': {},
+ 'Gucci': {},
+ 'Prada': {},
+ 'Balenciaga': {},
+ 'Saint Laurent': {},
+ 'Dior': {},
+ 'Givenchy': {},
+ 'Fendi': {},
+ 'Valentino': {},
+ 'Maison Margiela': {},
+ 'Amiri': {}}

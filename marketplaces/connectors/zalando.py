@@ -225,7 +225,7 @@ def _produit_depuis_carte(carte):
 class ZalandoConnector(MarketplaceConnector):
     name = "Zalando"
     display_name = "Zalando"
-    enabled = False
+    enabled = True
     currency = "EUR"
 
     def search(
@@ -233,6 +233,7 @@ class ZalandoConnector(MarketplaceConnector):
         query,
         price_max=None,
         limit=20,
+        page=1,
     ):
         query = str(query or "").strip()
 
@@ -256,12 +257,17 @@ class ZalandoConnector(MarketplaceConnector):
             ):
                 return []
 
+        try:
+            page = max(1, min(int(page or 1), 100))
+        except (TypeError, ValueError):
+            page = 1
+
         print(
             "[Zalando] "
-            f"Recherche : {query}"
+            f"Recherche : {query} | page={page}"
         )
 
-        url = f"{SEARCH_URL}?q={quote_plus(query)}"
+        url = f"{SEARCH_URL}?q={quote_plus(query)}&p={page}"
 
         session = construire_session()
 
@@ -376,3 +382,6 @@ class ZalandoConnector(MarketplaceConnector):
 
         finally:
             session.close()
+
+    def search_page(self, query, price_max=None, limit=20, page=1):
+        return self.search(query=query, price_max=price_max, limit=limit, page=page)

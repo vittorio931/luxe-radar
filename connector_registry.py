@@ -1,10 +1,13 @@
 from __future__ import annotations
 
-"""Auto-loader des connecteurs LUXE RADAR.
+"""Registre robuste des connecteurs LUXE RADAR.
 
-Tout fichier Python du dossier connectors contenant une classe héritant de
-MarketplaceConnector peut être détecté automatiquement. Les fichiers backup,
-test et helpers sont ignorés.
+Ce module est volontairement au niveau racine du projet. Il évite de dépendre
+de l'exécution de ``marketplaces/connectors/__init__.py`` au démarrage : sur
+certaines extractions Windows, Python peut traiter ``marketplaces.connectors``
+comme un namespace package et l'import ``from marketplaces.connectors import
+get_available_connectors`` échoue alors même que les modules du dossier sont
+présents.
 """
 
 import importlib
@@ -13,16 +16,12 @@ import os
 import pkgutil
 from pathlib import Path
 
-from .base import MarketplaceConnector
-from .quality_filters import filter_results
-from .universal import load_configured_connectors
+from marketplaces.connectors.base import MarketplaceConnector
+from marketplaces.connectors.quality_filters import filter_results
+from marketplaces.connectors.universal import load_configured_connectors
 
-_SKIP_MODULES = {
-    "__init__",
-    "base",
-    "quality_filters",
-    "universal",
-}
+_CONNECTORS_DIR = Path(__file__).resolve().parent / "marketplaces" / "connectors"
+_SKIP_MODULES = {"__init__", "base", "quality_filters", "universal"}
 
 
 def _debug(message):
@@ -31,7 +30,7 @@ def _debug(message):
 
 
 def _should_skip(module_name):
-    low = module_name.lower()
+    low = str(module_name or "").lower()
     if module_name in _SKIP_MODULES:
         return True
     return any(token in low for token in ("backup", "stable", "old", "test", "smoke"))
@@ -39,15 +38,15 @@ def _should_skip(module_name):
 
 def _native_connectors():
     found = {}
-    package_path = Path(__file__).resolve().parent
-    prefix = __name__ + "."
+    if not _CONNECTORS_DIR.is_dir():
+        raise RuntimeError(f"Dossier connecteurs introuvable: {_CONNECTORS_DIR}")
 
-    for info in pkgutil.iter_modules([str(package_path)]):
+    for info in pkgutil.iter_modules([str(_CONNECTORS_DIR)]):
         module_name = info.name
         if _should_skip(module_name):
             continue
         try:
-            module = importlib.import_module(prefix + module_name)
+            module = importlib.import_module(f"marketplaces.connectors.{module_name}")
         except Exception as exc:
             _debug(f"Import ignoré {module_name}: {exc}")
             continue
@@ -82,22 +81,14 @@ class _QualityProxy:
 
     def search(self, query, price_max=None, limit=20, **kwargs):
         results = self._connector.search(query=query, price_max=price_max, limit=limit, **kwargs)
-        return filter_results(
-            results,
-            query=query,
-            marketplace=str(getattr(self._connector, "name", "")),
-        )
+        return filter_results(results, query=query, marketplace=str(getattr(self._connector, "name", "")))
 
     def search_page(self, query, price_max=None, limit=20, page=1, **kwargs):
         method = getattr(self._connector, "search_page", None)
         if method is None:
             return self.search(query=query, price_max=price_max, limit=limit, **kwargs)
         results = method(query=query, price_max=price_max, limit=limit, page=page, **kwargs)
-        return filter_results(
-            results,
-            query=query,
-            marketplace=str(getattr(self._connector, "name", "")),
-        )
+        return filter_results(results, query=query, marketplace=str(getattr(self._connector, "name", "")))
 
 
 def _all_raw_connectors():
@@ -119,11 +110,11 @@ def _aliases(name, connector):
 
 
 def get_available_connectors():
-    result = {}
-    for name, connector in _all_raw_connectors().items():
-        if getattr(connector, "enabled", True):
-            result[name] = _QualityProxy(connector)
-    return result
+    return {
+        name: _QualityProxy(connector)
+        for name, connector in _all_raw_connectors().items()
+        if getattr(connector, "enabled", True)
+    }
 
 
 def get_connector(name):
@@ -137,8 +128,8 @@ def get_connector(name):
 
 
 def get_all_connectors(include_disabled=True):
-    result = {}
-    for name, connector in _all_raw_connectors().items():
-        if include_disabled or getattr(connector, "enabled", True):
-            result[name] = _QualityProxy(connector)
-    return result
+    return {
+        name: _QualityProxy(connector)
+        for name, connector in _all_raw_connectors().items()
+        if include_disabled or getattr(connector, "enabled", True)
+    }

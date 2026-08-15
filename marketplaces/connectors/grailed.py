@@ -3,6 +3,7 @@ import os
 import re
 import time
 import unicodedata
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from html import unescape
 from itertools import combinations
 from urllib.parse import urljoin
@@ -22,7 +23,15 @@ IS_RENDER = bool(
     os.environ.get("RENDER")
     or os.environ.get("RENDER_SERVICE_ID")
     or os.environ.get("RENDER_EXTERNAL_HOSTNAME")
+    or os.environ.get("LUXE_RADAR_ENV", "").lower() == "production"
 )
+
+
+def _recall_mode_enabled():
+    return str(os.environ.get("LUXE_RADAR_RECALL_MODE", "1")).strip().lower() in {
+        "1", "true", "yes", "on",
+    }
+
 
 # Secours uniquement si l'API de change ne répond pas.
 FALLBACK_USD_EUR = 0.86
@@ -201,6 +210,27 @@ TYPE_ALIASES = {
             "footwear",
         ),
     },
+    "ensemble": {
+        "query": (
+            "ensemble", "set", "tracksuit", "track suit", "survetement",
+            "survêtement", "co ord", "co-ord", "matching set",
+            "two piece", "2 piece", "two piece set", "2 piece set",
+            "2 pcs", "2pcs", "2 pieces", "hoodie and joggers",
+            "hoodie joggers", "hoodie and pants", "hoodie sweatpants",
+            "sweatshirt and joggers", "sweat et pantalon", "top and bottom",
+        ),
+        "title": (
+            "ensemble", "set", "tracksuit", "track suit", "survetement",
+            "co ord", "matching set", "two piece", "2 piece",
+            "two piece set", "2 piece set", "2 pcs", "2pcs", "2 pieces",
+            "hoodie and joggers", "hoodie joggers", "hoodie and pants",
+            "hoodie sweatpants", "sweatshirt and joggers",
+            "sweat et pantalon", "top and bottom",
+        ),
+        "grailed_suffixes": (
+            "set", "tracksuit", "track-suit", "matching-set",
+        ),
+    },
 }
 
 
@@ -291,6 +321,12 @@ def normaliser_texte(texte):
     texte = re.sub(
         r"\s+",
         " ",
+        texte,
+    )
+
+    texte = re.sub(
+        r"\b(?:essantials|essencials|essensials|essentails)\b",
+        "essentials",
         texte,
     )
 
@@ -496,6 +532,19 @@ def titre_correspond_recherche(
         )
     ):
         return False
+
+    query_n = normaliser_texte(query)
+    if "essentials" in query_n.split() and "essentials" in titre_n.split():
+        indique_fog = any(
+            marker in titre_n
+            for marker in ("fear of god", "fog essentials", "essentials fear of god")
+        )
+        concurrents = (
+            "adidas", "nike", "reebok", "puma", "asos design",
+            "new balance", "under armour",
+        )
+        if not indique_fog and any(brand in titre_n for brand in concurrents):
+            return False
 
     return True
 
@@ -1396,6 +1445,72 @@ def _normaliser_url_listing(
     return href
 
 
+def _collecter_cartes_http(
+    liens,
+    query,
+    type_recherche,
+    objectif=20,
+):
+    """Récupère quelques listings publics sans navigateur.
+
+    Ce n'est pas un contournement : on lit uniquement les URLs publiques déjà
+    présentes dans le HTML de /browse. Cela donne à Grailed une chance de
+    fournir de vraies annonces même quand le feed dynamique headless affiche
+    un challenge.
+    """
+    if not liens:
+        return []
+
+    plafond = 12 if IS_RENDER else 20
+    urls = list(dict.fromkeys(liens))[: max(1, min(plafond, objectif * 2))]
+    cartes = []
+
+    def charger(url):
+        try:
+            response = requests.get(
+                url,
+                headers=HEADERS,
+                timeout=(3, 6),
+                allow_redirects=True,
+            )
+            if response.status_code != 200:
+                return None
+            info = extraire_infos_listing(response.text, response.url)
+            if not info or info.get("sold"):
+                return None
+            title = str(info.get("title") or "").strip()
+            prix = info.get("price_usd")
+            if not title or prix is None:
+                return None
+            if (
+                not _recall_mode_enabled()
+                and not titre_correspond_recherche(title, query, type_recherche)
+            ):
+                return None
+            return {
+                "href": info.get("url") or url,
+                "title": title,
+                "price_usd": prix,
+                "image": info.get("image"),
+                "condition": info.get("condition"),
+            }
+        except Exception:
+            return None
+
+    with ThreadPoolExecutor(max_workers=min(4, len(urls))) as executor:
+        futurs = [executor.submit(charger, url) for url in urls]
+        for futur in as_completed(futurs):
+            carte = futur.result()
+            if carte:
+                cartes.append(carte)
+                if len(cartes) >= objectif:
+                    break
+
+    if cartes:
+        print(f"[Grailed] HTTP listings : {len(cartes)} carte(s) exploitable(s)")
+    return cartes
+
+
 def _titre_depuis_carte(
     carte,
 ):
@@ -1763,11 +1878,15 @@ def _collecter_cartes(
                         carte
                     )
 
-                    # On filtre ICI, avant toute autre requête.
-                    if not titre_correspond_recherche(
-                        title,
-                        query,
-                        type_recherche,
+                    # V2.8.11 : en couverture maximale, on conserve les
+                    # vraies cartes même si le modèle n'est pas confirmé.
+                    if (
+                        not _recall_mode_enabled()
+                        and not titre_correspond_recherche(
+                            title,
+                            query,
+                            type_recherche,
+                        )
                     ):
                         continue
 
@@ -1865,10 +1984,21 @@ def decouvrir_cartes_playwright(
         if cartes:
             return cartes
 
-        if IS_RENDER:
+        # V2.8.2 : le fallback visible pouvait coûter ~20-25 s pour 0
+        # résultat quand Grailed présentait un challenge. Le radar progressif
+        # doit rester rapide : par défaut on s'arrête après le headless.
+        # L'ancien comportement reste disponible manuellement pour diagnostic.
+        autoriser_visible = (
+            not IS_RENDER
+            and str(os.environ.get("LUXE_RADAR_GRAILED_VISIBLE", "0")).strip().lower()
+            in {"1", "true", "yes", "on"}
+        )
+
+        if not autoriser_visible:
+            suffixe = "sur Render" if IS_RENDER else "(mode rapide)"
             print(
-                "[Grailed] Feed vide/bloqué en headless -> "
-                "fallback visible ignoré sur Render"
+                "[Grailed] Feed vide/bloqué en headless -> fallback visible "
+                f"ignoré {suffixe}"
             )
             return []
 
@@ -2030,25 +2160,36 @@ class GrailedConnector(
         # 2. Lecture directe des cartes du feed dynamique
         # --------------------------------------------------------
 
-        try:
-            cartes = decouvrir_cartes_playwright(
-                routes_valides,
-                query,
-                type_recherche,
-                objectif=max(
-                    limit * 2,
-                    12,
-                ),
-            )
-        except Exception as e:
-            print(
-                f"[Grailed] Navigateur indisponible : {e}"
-            )
-            cartes = []
+        objectif_cartes = max(limit * 2, 12)
+
+        # D'abord les URLs de listing réellement présentes dans le HTML public.
+        # Cela évite de dépendre systématiquement du feed JavaScript Grailed.
+        cartes = _collecter_cartes_http(
+            liens,
+            query,
+            type_recherche,
+            objectif=objectif_cartes,
+        )
+
+        # Si le HTML public n'a pas fourni de cartes exploitables, on garde le
+        # navigateur comme fallback. Aucun challenge n'est contourné.
+        if not cartes:
+            try:
+                cartes = decouvrir_cartes_playwright(
+                    routes_valides,
+                    query,
+                    type_recherche,
+                    objectif=objectif_cartes,
+                )
+            except Exception as e:
+                print(
+                    f"[Grailed] Navigateur indisponible : {e}"
+                )
+                cartes = []
 
         if not cartes:
             print(
-                "[Grailed] Aucune carte pertinente trouvée"
+                "[Grailed] Aucune carte exploitable trouvée"
             )
             return []
 
@@ -2064,6 +2205,9 @@ class GrailedConnector(
 
         resultats = []
         produits_vus = set()
+        diag_titre_prix = 0
+        diag_hors_budget = 0
+        diag_doublons = 0
 
         for carte in cartes:
             title = str(
@@ -2081,6 +2225,7 @@ class GrailedConnector(
                 not title
                 or prix_usd is None
             ):
+                diag_titre_prix += 1
                 continue
 
             prix_eur = round(
@@ -2095,6 +2240,7 @@ class GrailedConnector(
                 price_max_float is not None
                 and prix_eur > price_max_float
             ):
+                diag_hors_budget += 1
                 continue
 
             cle_produit = (
@@ -2107,6 +2253,7 @@ class GrailedConnector(
             )
 
             if cle_produit in produits_vus:
+                diag_doublons += 1
                 continue
 
             produits_vus.add(
@@ -2207,6 +2354,11 @@ class GrailedConnector(
         print(
             "[Grailed] "
             f"{len(resultats)} résultats retenus"
+        )
+        print(
+            "[Grailed][DIAG] "
+            f"cartes={len(cartes)} | invalides={diag_titre_prix} | "
+            f"hors_budget={diag_hors_budget} | doublons={diag_doublons}"
         )
 
         return resultats[

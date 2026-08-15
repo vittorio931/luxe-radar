@@ -410,3 +410,209 @@ def load_configured_connectors():
         except Exception as exc:
             print(f"[CONFIG] Site ignoré ({site.get('name')}): {exc}")
     return connectors
+
+# ---------------------------------------------------------------------------
+# V2.9.0 - discovery public en vagues
+# ---------------------------------------------------------------------------
+
+def load_discovery_site_configs():
+    """Retourne les sites catalogués pouvant être sondés sans contrôle d'accès.
+
+    Les sites explicitement marqués ``blocked`` ne sont jamais recontactés par
+    ce mécanisme. Le but est d'élargir progressivement la couverture sans
+    déclencher des centaines de requêtes en parallèle.
+    """
+    data = _load_config()
+    out = []
+    seen = set()
+    for raw in data.get("sites", []):
+        if not isinstance(raw, dict):
+            continue
+        status = str(raw.get("status") or "").lower()
+        ctype = str(raw.get("connector_type") or raw.get("mode") or "").lower()
+        if status == "blocked" or ctype == "dedicated" or raw.get("enabled"):
+            continue
+        base_url = str(raw.get("base_url") or raw.get("url") or "").strip().rstrip("/")
+        name = str(raw.get("name") or "").strip()
+        if not name or not base_url:
+            continue
+        domain = urlparse(base_url).netloc.casefold()
+        if not domain or domain in seen:
+            continue
+        seen.add(domain)
+        # Les Shopify connus utilisent leur connecteur configurable, les autres
+        # passent par le lecteur JSON-LD générique.
+        out.append(dict(raw))
+    return out
+
+
+def _jsonld_products(value):
+    found = []
+    if isinstance(value, list):
+        for item in value:
+            found.extend(_jsonld_products(item))
+        return found
+    if not isinstance(value, dict):
+        return found
+    type_value = value.get("@type")
+    types = type_value if isinstance(type_value, list) else [type_value]
+    if any(str(t).casefold() in {"product", "productgroup"} for t in types if t):
+        found.append(value)
+    for key in ("@graph", "itemListElement", "mainEntity", "item", "items"):
+        if key in value:
+            found.extend(_jsonld_products(value.get(key)))
+    return found
+
+
+def _first_offer(product):
+    offers = product.get("offers") if isinstance(product, dict) else None
+    if isinstance(offers, list):
+        offers = next((x for x in offers if isinstance(x, dict)), None)
+    return offers if isinstance(offers, dict) else {}
+
+
+def _generic_jsonld_site_search(config, query, price_max=None, limit=6):
+    """Sonde une page de recherche publique et lit uniquement son JSON-LD.
+
+    Aucun CAPTCHA, login ou endpoint privé n'est contourné. Si la page ne
+    fournit pas de données produit structurées, le site renvoie simplement 0.
+    """
+    name = str(config.get("name") or "Site")
+    base_url = str(config.get("base_url") or config.get("url") or "").rstrip("/")
+    if not base_url:
+        return []
+    session = requests.Session()
+    session.headers.update(DEFAULT_HEADERS)
+    paths = (
+        f"/search?q={quote(query)}",
+        f"/search?query={quote(query)}",
+        f"/?s={quote(query)}&post_type=product",
+    )
+    html = None
+    final_url = None
+    for path in paths:
+        try:
+            r = session.get(urljoin(base_url + "/", path.lstrip("/")), timeout=(2.0, 3.5), allow_redirects=True)
+        except requests.RequestException:
+            continue
+        if r.status_code != 200 or not r.text:
+            continue
+        # Évite les pages de challenge évidentes : on ne tente rien d'autre.
+        sample = _norm(r.text[:8000])
+        if any(marker in sample for marker in ("captcha", "verify you are human", "access denied", "cloudflare challenge")):
+            break
+        html = r.text
+        final_url = r.url
+        break
+    if not html:
+        return []
+
+    scripts = re.findall(
+        r'<script[^>]+type=["\']application/ld\+json["\'][^>]*>(.*?)</script>',
+        html,
+        flags=re.I | re.S,
+    )
+    products = []
+    for raw in scripts:
+        raw = raw.strip()
+        if not raw:
+            continue
+        try:
+            data = json.loads(raw)
+        except Exception:
+            continue
+        products.extend(_jsonld_products(data))
+
+    out = []
+    seen = set()
+    for product in products:
+        title = str(product.get("name") or "").strip()
+        if not title or not _query_match(title, query):
+            continue
+        offer = _first_offer(product)
+        price = _safe_float(offer.get("price") or offer.get("lowPrice") or product.get("price"))
+        currency = str(offer.get("priceCurrency") or config.get("currency") or "EUR").upper()
+        if price is None:
+            continue
+        if currency != "EUR":
+            fx = _safe_float(config.get("fx_rate_to_eur"))
+            if not fx or fx <= 0:
+                continue
+            price_eur = round(price * fx, 2)
+        else:
+            price_eur = round(price, 2)
+        if price_max is not None and price_eur > float(price_max):
+            continue
+        link = product.get("url") or offer.get("url") or final_url
+        image = product.get("image")
+        if isinstance(image, list):
+            image = image[0] if image else None
+        if isinstance(image, dict):
+            image = image.get("url") or image.get("contentUrl")
+        link = urljoin(base_url + "/", str(link or ""))
+        if not link or link in seen:
+            continue
+        seen.add(link)
+        out.append({
+            "marketplace": name,
+            "plateforme": name,
+            "titre": title,
+            "title": title,
+            "prix": price_eur,
+            "price": price_eur,
+            "devise": "EUR",
+            "devise_originale": currency,
+            "lien": link,
+            "url": link,
+            "image": urljoin(base_url + "/", str(image)) if image else None,
+            "categorie": "A VERIFIER",
+            "score": 55,
+            "score_match": 65,
+            "score_confiance": 45,
+            "score_affaire": 50,
+            "alertes": ["Source catalogue public : vérification recommandée"],
+            "raisons": [f"Produit structuré public trouvé sur {name}"],
+        })
+        if len(out) >= max(1, int(limit)):
+            break
+    return out
+
+
+def discover_catalog_wave(query, price_max=None, cursor=0, site_limit=8, per_site_limit=6):
+    """Explore une petite vague du catalogue massif, jamais les 1000 sites à la fois."""
+    from concurrent.futures import ThreadPoolExecutor, as_completed
+
+    sites = load_discovery_site_configs()
+    try:
+        cursor = max(0, int(cursor))
+    except Exception:
+        cursor = 0
+    site_limit = max(1, min(int(site_limit or 8), 16))
+    batch = sites[cursor:cursor + site_limit]
+    next_cursor = cursor + len(batch)
+    if not batch:
+        return [], next_cursor, False, 0
+
+    def run(site):
+        ctype = str(site.get("connector_type") or site.get("mode") or "").lower()
+        try:
+            if ctype == "shopify":
+                cfg = dict(site)
+                cfg["enabled"] = True
+                cfg.setdefault("mode", "shopify")
+                connector = ConfiguredSiteConnector(cfg)
+                return connector.search(query=query, price_max=price_max, limit=per_site_limit)
+            return _generic_jsonld_site_search(site, query, price_max=price_max, limit=per_site_limit)
+        except Exception:
+            return []
+
+    results = []
+    workers = min(4, len(batch))
+    with ThreadPoolExecutor(max_workers=max(1, workers), thread_name_prefix="luxe-discovery") as pool:
+        futures = [pool.submit(run, site) for site in batch]
+        for future in as_completed(futures):
+            try:
+                results.extend(future.result() or [])
+            except Exception:
+                pass
+    return results, next_cursor, next_cursor < len(sites), len(batch)

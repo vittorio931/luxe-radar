@@ -3,6 +3,7 @@ from radar_engine import (
     _detecter_type_multi,
     _titre_correspond_multi,
 )
+from marketplaces.connectors.aliexpress import _extraire_items, _produit_depuis_item
 
 
 def verifier(condition, message):
@@ -105,6 +106,35 @@ def main():
         ),
         "L'avertissement frais/import 67behaviour manque",
     )
+
+
+    # 7) Ensembles : plusieurs formulations doivent être reconnues.
+    type_ensemble = _detecter_type_multi("ensemble Essantials")
+    verifier(type_ensemble == "ensemble", "Type ensemble non détecté")
+    verifier(
+        _titre_correspond_multi(
+            "Fear of God Essentials tracksuit hoodie sweatpants",
+            "ensemble Essantials",
+            type_ensemble,
+        ),
+        "Ensemble Fear of God Essentials valide rejeté",
+    )
+    verifier(
+        not _titre_correspond_multi(
+            "adidas Originals Essentials tracksuit",
+            "ensemble Essentials",
+            type_ensemble,
+        ),
+        "adidas Essentials ne doit pas passer pour Fear of God Essentials",
+    )
+
+    # 8) AliExpress : fallback JSON imbriqué + image sous forme de chaîne.
+    html = 'init-data-start { data: {"moved":{"products":[{"productId":"123","productTitle":"Nike Trail test","price":{"value":"49.90"},"currencyCode":"EUR","image":"//ae01.alicdn.com/test.jpg"},{"productId":"124","productTitle":"Nike Trail test 2","price":{"value":"39.90"},"currencyCode":"EUR"},{"productId":"125","productTitle":"Nike Trail test 3","price":{"value":"29.90"},"currencyCode":"EUR"}]}}} init-data-end'
+    ali_items = _extraire_items(html)
+    verifier(ali_items is not None and len(ali_items) == 3, "Fallback AliExpress imbriqué cassé")
+    ali_product = _produit_depuis_item(ali_items[0])
+    verifier(ali_product is not None and ali_product["prix"] == 49.9, "Prix AliExpress fallback invalide")
+    verifier(ali_product["image"] == "https://ae01.alicdn.com/test.jpg", "Image AliExpress chaîne invalide")
 
     print("OK - Tous les tests radar_engine sont passes.")
 

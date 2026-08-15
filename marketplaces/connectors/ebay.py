@@ -21,9 +21,8 @@ from .base import MarketplaceConnector
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 ENV_FILE = PROJECT_ROOT / ".env"
 
-# En local, charge .env s'il existe. En production (Render, etc.),
-# les secrets viennent des variables d'environnement et aucun fichier
-# .env physique n'est requis.
+# En local, charge .env s'il existe. En production, Render injecte les
+# secrets via les variables d'environnement : aucun fichier physique requis.
 load_dotenv(
     dotenv_path=ENV_FILE,
     override=False,
@@ -39,11 +38,11 @@ EBAY_CLIENT_SECRET = os.getenv(
     "",
 ).strip()
 
-
 IS_RENDER = bool(
     os.environ.get("RENDER")
     or os.environ.get("RENDER_SERVICE_ID")
     or os.environ.get("RENDER_EXTERNAL_HOSTNAME")
+    or os.environ.get("LUXE_RADAR_ENV", "").lower() == "production"
 )
 
 EBAY_MARKETPLACE_ID = "EBAY_FR"
@@ -189,6 +188,32 @@ TYPE_ALIASES = {
         "jumper",
         "knit",
     ],
+
+    "ensemble": [
+        "ensemble",
+        "set",
+        "tracksuit",
+        "track suit",
+        "survetement",
+        "survêtement",
+        "co ord",
+        "co-ord",
+        "matching set",
+        "two piece",
+        "2 piece",
+        "two piece set",
+        "2 piece set",
+        "2 pcs",
+        "2pcs",
+        "2 pieces",
+        "hoodie and joggers",
+        "hoodie joggers",
+        "hoodie and pants",
+        "hoodie sweatpants",
+        "sweatshirt and joggers",
+        "sweat et pantalon",
+        "top and bottom",
+    ],
 }
 
 
@@ -259,6 +284,30 @@ TYPE_TITRE = {
         "jumper",
         "knit",
     ],
+
+    "ensemble": [
+        "ensemble",
+        "set",
+        "tracksuit",
+        "track suit",
+        "survetement",
+        "co ord",
+        "matching set",
+        "two piece",
+        "2 piece",
+        "two piece set",
+        "2 piece set",
+        "2 pcs",
+        "2pcs",
+        "2 pieces",
+        "hoodie and joggers",
+        "hoodie joggers",
+        "hoodie and pants",
+        "hoodie sweatpants",
+        "sweatshirt and joggers",
+        "sweat et pantalon",
+        "top and bottom",
+    ],
 }
 
 
@@ -325,6 +374,12 @@ def normaliser_texte(texte):
     texte = re.sub(
         r"\s+",
         " ",
+        texte,
+    )
+
+    texte = re.sub(
+        r"\b(?:essantials|essencials|essensials|essentails)\b",
+        "essentials",
         texte,
     )
 
@@ -519,6 +574,19 @@ def titre_correspond_recherche(
         ):
             return False
 
+    query_n = normaliser_texte(query)
+    if "essentials" in query_n.split() and "essentials" in titre_n.split():
+        indique_fog = any(
+            marker in titre_n
+            for marker in ("fear of god", "fog essentials", "essentials fear of god")
+        )
+        concurrents = (
+            "adidas", "nike", "reebok", "puma", "asos design",
+            "new balance", "under armour",
+        )
+        if not indique_fog and any(brand in titre_n for brand in concurrents):
+            return False
+
     return True
 
 
@@ -601,17 +669,13 @@ def obtenir_token_ebay(
             return token_cache
 
     if not EBAY_CLIENT_ID:
-
         raise RuntimeError(
-            "EBAY_CLIENT_ID absent. Configure cette variable "
-            "dans l'environnement du service."
+            "EBAY_CLIENT_ID absent ou vide dans les variables d'environnement"
         )
 
     if not EBAY_CLIENT_SECRET:
-
         raise RuntimeError(
-            "EBAY_CLIENT_SECRET absent. Configure cette variable "
-            "dans l'environnement du service."
+            "EBAY_CLIENT_SECRET absent ou vide dans les variables d'environnement"
         )
 
     try:
@@ -643,7 +707,7 @@ def obtenir_token_ebay(
 
             timeout=(
                 3 if IS_RENDER else 5,
-                6 if IS_RENDER else 15,
+                8 if IS_RENDER else 15,
             ),
         )
 
@@ -1310,6 +1374,7 @@ class EbayConnector(
         query,
         price_max=None,
         limit=20,
+        page=1,
     ):
         query = str(
             query or ""
@@ -1392,20 +1457,39 @@ class EbayConnector(
         # à eBay que nécessaire,
         # car notre filtre strict
         # va ensuite en éliminer.
+        # V2.9.2 : 5x + plafond 200 ralentissait fortement les requêtes
+        # larges alors que le radar sait maintenant paginer à l'infini.
+        # Un sur-échantillonnage x2 suffit pour alimenter le filtre strict.
         request_limit = min(
             max(
-                limit * 5,
+                limit * 2,
                 50,
             ),
-            200,
+            120,
         )
+
+        try:
+            page = max(1, min(int(page or 1), 100))
+        except (TypeError, ValueError):
+            page = 1
+        request_offset = (page - 1) * request_limit
+
+        query_api = query
+        if type_recherche == "ensemble" and mots_importants:
+            # Pour les ensembles, les vendeurs utilisent ensemble/set/tracksuit.
+            # On interroge eBay avec la marque/modèle seulement puis le filtre
+            # local impose le type, ce qui évite de perdre les titres anglais.
+            query_api = " ".join(mots_importants)
 
         params = {
             "q":
-                query,
+                query_api,
 
             "limit":
                 request_limit,
+
+            "offset":
+                request_offset,
 
             "fieldgroups":
                 "EXTENDED",
@@ -1445,8 +1529,10 @@ class EbayConnector(
         }
 
         print(
-            f"[eBay] Recherche : {query}"
+            f"[eBay] Recherche : {query} | page={page}"
         )
+        if query_api != query:
+            print(f"[eBay] Requête large ensemble : {query_api}")
 
         print(
             "[eBay] Filtre strict : "
@@ -1961,3 +2047,5 @@ class EbayConnector(
         )
 
         return resultats[:limit]
+    def search_page(self, query, price_max=None, limit=20, page=1):
+        return self.search(query=query, price_max=price_max, limit=limit, page=page)
