@@ -304,6 +304,12 @@ class DHgateConnector(MarketplaceConnector):
     enabled = True
     currency = "EUR"
 
+    supports_pagination = False
+    expansion_page_size = 50
+    expansion_recall_cap = 50
+    max_pages = 1
+    cooldown_seconds = 0.6
+
     def search(
         self,
         query,

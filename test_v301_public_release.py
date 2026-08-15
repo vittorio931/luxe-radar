@@ -13,9 +13,9 @@ billing = (root / "billing_stripe.py").read_text(encoding="utf-8")
 render = (root / "render.yaml").read_text(encoding="utf-8")
 sites = json.loads((root / "marketplaces" / "sites.json").read_text(encoding="utf-8"))["sites"]
 
-assert 'APP_VERSION = "3.0.2"' in app
-assert 'ASSET_VERSION = "20260815-302"' in app
-assert 'fast_limit = 14 if _is_mobile_request() else 18' in app
+assert 'APP_VERSION = "3.7.0"' in app
+assert 'ASSET_VERSION = "20260815-370"' in app
+assert "Le HTML n'attend plus eBay ni aucun autre marchand" in app
 assert '"Spartoo", "Footshop", "JD Sports"' in app
 assert '90 if request.endpoint == "expand_results"' in app
 assert 'retry_after_ms' in app
@@ -28,24 +28,24 @@ assert "#smart-deals" in js
 assert "data-client-filter" in js
 assert "scheduleAutoLoad" in js and "scrollCycleBusy" in js and "expansionNextAt" in js
 
-assert 'Le marché entier.' in html
-assert 'RADAR 3.0' in html
+assert 'Que veux-tu comparer ?' in html
+assert 'market-header' in html and 'global-search-form' in html
 assert 'id="radar-recent-searches"' in html
 assert 'id="smart-deals"' in html
-assert 'data-client-filter="favorites"' in html
-assert 'data-client-filter="low-risk"' in html
+assert 'data-client-filter="below-median"' in html
+assert 'id="restore-hidden-results"' in html
 assert 'id="quick-alert"' in html
 assert "['Spartoo','Footshop','JD Sports']" in html
 
-assert 'V3.0.2 — PUBLIC PERFORMANCE HOTFIX' in css
-assert '.search-panel:before' in css
-assert '.radar-proof' in css
+assert 'V3.3.0 — SHOPPING-FIRST UI' in css
+assert '.shopping-hero' in css
+assert '.precision-deck' in css
 assert '.recent-query-chip' in css
 assert '.quick-result-chip.featured-action' in css
 assert 'body.radar-focus .main' in css
 
-assert 'luxe-radar-shell-v302' in sw
-assert '20260815-302' in sw
+assert 'luxe-radar-shell-v370' in sw
+assert '20260815-370' in sw
 
 active = {x["name"] for x in sites if x.get("status") == "active"}
 for source in ("Spartoo", "Footshop", "JD Sports", "eBay", "Vinted", "Zalando"):
@@ -57,7 +57,8 @@ for token in ("class SpartooConnector", "class FootshopConnector", "class JDSpor
     assert token in retail
 assert "Contrôle d'accès détecté -> route ignorée" in retail
 assert "parse_jsonld_products" in retail and "parse_html_cards" in retail
-assert '"Spartoo": 7' in engine and '"Footshop": 8' in engine and '"JD Sports": 9' in engine
+for source in ("Spartoo","Footshop","JD Sports","i-Run","Direct Running"):
+    assert f'"{source}"' in engine
 
 
 assert 'LUXE_RADAR_BILLING_ENABLED' in billing
@@ -70,7 +71,7 @@ assert 'connecteurs actifs testés · 50 résultats par lot' not in html
 # Le ZIP public ne doit jamais inclure de secret local.
 assert not (root / ".env").exists()
 
-print("OK - V3.0.2 public release: UI, anti-spam, stale-token handling, 14 active sources and conservative retail connectors validated.")
+print("OK - V3.7.0 public release: UI, anti-spam, stale-token handling, 24 active sources and conservative retail connectors validated.")
 
 from search_understanding import understand_query
 for query, brand, model in [
@@ -86,4 +87,4 @@ for query, brand, model in [
     understood = understand_query(query)
     assert understood.brand == brand, (query, understood)
     assert understood.model == model, (query, understood)
-print("OK - V3.0.2 typo tolerance sample across major brands validated.")
+print("OK - V3.7.0 typo tolerance sample across major brands validated.")

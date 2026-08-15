@@ -103,6 +103,52 @@ def _detected_brands(text):
     return found
 
 
+_GENERIC_NUMBER_PREFIXES = {
+    "size", "taille", "pointure", "eu", "uk", "us", "prix", "price",
+    "moins", "under", "max", "maximum", "min", "minimum",
+}
+
+def _explicit_model_anchor_mismatch(query, title):
+    """Rejette les variantes numériques évidentes d'un modèle demandé.
+
+    Exemple: `On Cloud 5` doit accepter `Cloud 5 Waterproof` mais pas
+    `Cloud 6` ni `Cloud X 5`. On applique uniquement ce garde-fou aux
+    requêtes courtes contenant une marque connue + un nombre, afin de ne pas
+    transformer une pointure ou un prix en faux modèle.
+    """
+    q = _norm(query)
+    t = _norm(title)
+    if not q or not t or not _detected_brands(q):
+        return False
+    q_tokens = re.findall(r"[a-z0-9]+", q)
+    t_tokens = re.findall(r"[a-z0-9]+", t)
+    if len(q_tokens) > 8 or not any(tok.isdigit() for tok in q_tokens):
+        return False
+    compact_t = "".join(t_tokens)
+    anchors = []
+    for idx, tok in enumerate(q_tokens):
+        if not tok.isdigit() or idx == 0:
+            continue
+        prev = q_tokens[idx - 1]
+        if prev in _GENERIC_NUMBER_PREFIXES:
+            continue
+        if len(prev) < 1:
+            continue
+        anchors.append((prev, tok))
+    if not anchors:
+        return False
+    for left, number in anchors:
+        adjacent = any(
+            t_tokens[i] == left and i + 1 < len(t_tokens) and t_tokens[i + 1] == number
+            for i in range(len(t_tokens))
+        )
+        compact = f"{left}{number}" in compact_t
+        if adjacent or compact:
+            continue
+        return True
+    return False
+
+
 def evaluate_result(item, query="", marketplace=""):
     """Retourne (keep: bool, reason: str|None)."""
     if not isinstance(item, dict):
@@ -121,9 +167,25 @@ def evaluate_result(item, query="", marketplace=""):
         if _has(full, phrase):
             return False, f"annonce à ignorer ({phrase})"
 
-    # V2.8.11 : en couverture maximale, on ne retire plus les vraies cartes
-    # pour simple doute de pertinence. Les filtres de marque/modèle restent
-    # disponibles comme métadonnées et dans l'interface.
+    # V3.7.0 : une marque explicite doit réellement être présente dans le
+    # titre. Ce garde-fou est volontairement placé AVANT le mode recall : il
+    # empêche `River Island ... stone` d'entrer dans une recherche Stone
+    # Island tout en laissant les recherches génériques fonctionner.
+    query_brands = _detected_brands(query)
+    if len(query_brands) == 1:
+        requested_brand = next(iter(query_brands))
+        title_brands = _detected_brands(title)
+        if requested_brand not in title_brands:
+            return False, f"marque demandée absente ({requested_brand})"
+
+    # V3.5.0 : même en mode couverture maximale, on retire les variantes de
+    # modèle manifestement incompatibles avec une requête explicite. Cela
+    # évite par exemple Cloud 6 / Cloud X 5 pour une recherche Cloud 5.
+    if _explicit_model_anchor_mismatch(query, title):
+        return False, "variante de modèle incompatible"
+
+    # V2.8.11 : en couverture maximale, on conserve le reste des vraies cartes
+    # et l'interface décide ensuite du niveau de pertinence à afficher.
     if _recall_mode_enabled():
         return True, None
 

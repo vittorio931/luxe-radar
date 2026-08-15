@@ -37,7 +37,7 @@ SEARCH_TEMPLATE = (
 # et on garde /w/... uniquement comme repli si aucun candidat pertinent n'est
 # présent dans la première réponse.
 SEARCH_QUERY_TEMPLATE = (
-    f"{BASE_URL}/wholesale?SearchText={{query}}"
+    f"{BASE_URL}/wholesale?SearchText={{query}}&g=y&currency=EUR&shipCountry=FR"
 )
 
 PRODUCT_URL_TEMPLATE = (
@@ -158,6 +158,14 @@ def construire_session():
     session.mount("https://", adapter)
     session.mount("http://", adapter)
     session.headers.update(REQUEST_HEADERS)
+    # Préférence publique de locale/devise : demander explicitement la France
+    # et l'EUR évite les lots renvoyés en INR/USD par certains nœuds CDN.
+    # Aucun contrôle d'accès n'est contourné.
+    session.cookies.set(
+        "aep_usuc_f",
+        "site=glo&c_tp=EUR&region=FR&b_locale=fr_FR",
+        domain=".aliexpress.com",
+    )
 
     return session
 
@@ -514,6 +522,12 @@ class AliExpressConnector(MarketplaceConnector):
     display_name = "AliExpress"
     enabled = True
     currency = "EUR"
+
+    supports_pagination = False
+    expansion_page_size = 60
+    expansion_recall_cap = 60
+    max_pages = 1
+    cooldown_seconds = 0.6
 
     def search(
         self,

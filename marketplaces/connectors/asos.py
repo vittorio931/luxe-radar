@@ -67,14 +67,14 @@ IS_RENDER = bool(
     or os.environ.get("LUXE_RADAR_ENV", "").lower() == "production"
 )
 HTTP_CONNECT_TIMEOUT = 2.5 if IS_RENDER else 4
-HTTP_READ_TIMEOUT = 5 if IS_RENDER else 15
+HTTP_READ_TIMEOUT = 4 if IS_RENDER else 15
 HTTP_TIMEOUT = (HTTP_CONNECT_TIMEOUT, HTTP_READ_TIMEOUT)
 
 GBP_EUR_FALLBACK = 1.16
 FX_CACHE_TTL = 6 * 60 * 60
 
 _MAX_ITEMS = 200
-_DEFAULT_FR_PAGES = 2
+_DEFAULT_FR_PAGES = 1 if IS_RENDER else 2
 _DEFAULT_GB_FALLBACK_PAGES = 1
 _MAX_PAGES = 5
 _MAX_QUERY_VARIANTS = 4 if IS_RENDER else 8
@@ -208,6 +208,39 @@ def _token_requete_present_dans_titre(token, titre_n):
     ) is not None
 
 
+# V3.7.x : marques multi-mots traitées comme une entité contiguë. Tant que la
+# phrase complète est demandée, elle doit apparaître d'un bloc dans le titre.
+_MARQUES_ENTITE_MULTI_MOTS = frozenset({
+    "stone island", "new balance", "under armour", "underarmour",
+    "the north face", "north face", "fear of god", "fear of god essentials",
+    "off white", "ralph lauren", "polo ralph lauren", "hugo boss",
+    "tommy hilfiger", "calvin klein", "jack jones", "jack & jones",
+    "dolce gabbana", "dolce & gabbana", "carhartt wip", "c p company",
+    "cp company", "hoka one one", "arc teryx", "arcteryx",
+    "louis vuitton", "christian dior", "saint laurent",
+    "river island",
+})
+
+def _marque_entite_absente(titre_n, query_n):
+    """Retourne la marque multi-mots absente du titre, sinon ``None``.
+
+    ``Stone Island`` -> ``River Island stone wash`` : la phrase n'apparaît pas
+    d'un bloc, la carte est déclassée. ``Fear of God Essentials`` reste accepté
+    sous la forme ``FOG Essentials`` (variante officielle).
+    """
+    for phrase in sorted(_MARQUES_ENTITE_MULTI_MOTS, key=len, reverse=True):
+        if phrase not in query_n:
+            continue
+        if phrase in titre_n:
+            return None
+        if phrase == "fear of god" and (
+            "fog essentials" in titre_n or "essentials fear of god" in titre_n
+        ):
+            return None
+        return phrase
+    return None
+
+
 def _score_pertinence_titre(titre, query):
     """Score local ASOS, sensible au type de produit et à ESSENTIALS.
 
@@ -219,6 +252,13 @@ def _score_pertinence_titre(titre, query):
     query_n = _normaliser_texte(query)
     if not titre_n or not query_n:
         return 0, False
+
+    # V3.7.x : une marque multi-mots nommée dans la requête est une ENTITÉ
+    # contiguë, pas une somme de jetons indépendants. ``Stone Island`` ne doit
+    # donc pas matcher ``River Island stone wash`` (fort=False, score bas).
+    marque_absente = _marque_entite_absente(titre_n, query_n)
+    if marque_absente:
+        return 5, False
 
     type_nom, _ = _detecter_type_recherche(query)
     type_tokens = set()
@@ -1004,6 +1044,12 @@ class ASOSConnector(MarketplaceConnector):
     enabled = True
     base_url = BASE_URL
     currency = "EUR"
+
+    supports_pagination = False
+    expansion_page_size = 60
+    expansion_recall_cap = 60
+    max_pages = 1
+    cooldown_seconds = 0.5
 
     def search(self, query, price_max=None, limit=20):
         query = str(query or "").strip()

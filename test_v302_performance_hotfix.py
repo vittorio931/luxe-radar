@@ -7,10 +7,11 @@ zalando = (root / 'marketplaces/connectors/zalando.py').read_text(encoding='utf-
 sw = (root / 'static/sw.js').read_text(encoding='utf-8')
 req = (root / 'requirements.txt').read_text(encoding='utf-8')
 
-assert 'APP_VERSION = "3.0.2"' in app
-assert 'ASSET_VERSION = "20260815-302"' in app
-assert '"SSENSE", "ASOS", "AliExpress", "DHgate"' in app
-assert '"Cdiscount", "Zalando"' in app
+assert 'APP_VERSION = "3.7.0"' in app
+assert 'ASSET_VERSION = "20260815-370"' in app
+for source in ("Vinted","Zalando","ASOS","SSENSE","Cdiscount"):
+    assert f'"{source}"' in app
+assert '"Cdiscount"' in app and '"Zalando"' in app
 assert 'wave_order = ("eBay",) if initial_pipeline_pending else EXPAND_WAVE_ORDER' in app
 assert '"Zalando": 30' in app
 assert 'empty_threshold = 1 if target == "Zalando" else 2' in app
@@ -26,8 +27,8 @@ assert 'if response.status_code in {403, 429}' in zalando
 assert 'aucun contournement' in zalando
 assert 'pause rapide' in zalando
 
-assert 'luxe-radar-shell-v302' in sw
-assert '20260815-302' in sw
+assert 'luxe-radar-shell-v370' in sw
+assert '20260815-370' in sw
 assert 'gunicorn==23.0.0' in req
 assert 'gunicorn==23.0.1' not in req
 assert not (root / '.env').exists()
@@ -36,4 +37,4 @@ assert not (root / '.env').exists()
 spec = importlib.util.spec_from_file_location('zalando_v302', root / 'marketplaces/connectors/zalando.py')
 # L'import direct relatif n'est pas pratique hors package; on valide donc la config par source.
 
-print('OK - V3.0.2 Zalando fast-fail, Render page cap and anti-stall hotfix validated.')
+print('OK - V3.7.0 retains V3.0.2 Zalando fast-fail, Render page cap and anti-stall hotfix validated.')

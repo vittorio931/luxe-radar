@@ -11,6 +11,7 @@ import html as html_lib
 import json
 import os
 import re
+import time
 import unicodedata
 from urllib.parse import quote, quote_plus, urljoin, urlparse
 
@@ -37,6 +38,12 @@ HEADERS = {
     "Accept-Language": "fr-FR,fr;q=0.9,en;q=0.8",
     "Accept-Encoding": "identity",
 }
+
+# Évite de re-frapper en boucle une source publique qui vient de refuser la requête.
+# Ce cache est uniquement mémoire/processus et expire automatiquement.
+_SOURCE_COOLDOWN_UNTIL = {}
+_SOURCE_COOLDOWN_SECONDS = 600 if IS_RENDER else 90
+
 
 _JSONLD_RE = re.compile(
     r'<script[^>]+type=["\']application/ld\+json["\'][^>]*>(.*?)</script>',
@@ -87,6 +94,43 @@ def _session():
     s.mount("http://", adapter)
     s.headers.update(HEADERS)
     return s
+
+
+def _same_public_host(candidate_url, base_url):
+    """Autorise uniquement les redirections HTTP(S) restant sur le marchand.
+
+    Certains frontends exposent dans leur HTML des placeholders JS du type
+    `${searchAction}`. `requests` essayait auparavant de les résoudre comme un
+    vrai nom DNS. On refuse simplement ces cibles au lieu de les suivre.
+    """
+    try:
+        candidate = urlparse(candidate_url)
+        base = urlparse(base_url)
+    except Exception:
+        return False
+    if candidate.scheme not in {"http", "https"} or not candidate.netloc:
+        return False
+    if any(marker in candidate.netloc for marker in ("$", "{", "}", "%7b", "%7d")):
+        return False
+    host = candidate.hostname.casefold().removeprefix("www.") if candidate.hostname else ""
+    base_host = base.hostname.casefold().removeprefix("www.") if base.hostname else ""
+    return bool(host and base_host and (host == base_host or host.endswith("." + base_host)))
+
+
+def _safe_public_get(session, url, base_url, *, max_redirects=3):
+    current = url
+    for _hop in range(max_redirects + 1):
+        response = session.get(current, timeout=HTTP_TIMEOUT, allow_redirects=False)
+        if response.status_code not in {301, 302, 303, 307, 308}:
+            return response
+        location = str(response.headers.get("Location") or "").strip()
+        if not location:
+            return response
+        candidate = urljoin(current, location)
+        if not _same_public_host(candidate, base_url):
+            return None
+        current = candidate
+    return None
 
 
 def _walk_json(value):
@@ -230,14 +274,35 @@ class _PublicRetailBase(MarketplaceConnector):
     currency = "EUR"
     base_url = ""
     search_template = ""
+    # V3.5.0 : plusieurs boutiques changent parfois de route de recherche.
+    # On peut fournir 2-3 routes publiques candidates, sans aucun contournement.
+    search_templates = ()
     allowed_path_hints = ()
 
+    supports_pagination = True
+    expansion_page_size = 50
+    expansion_recall_cap = 120
+    max_pages = 3
+    empty_pages_threshold = 3
+    cooldown_seconds = 0.3
+
+    def build_search_urls(self, query, page=1):
+        values = self.search_templates or ((self.search_template,) if self.search_template else ())
+        q = quote_plus(str(query or "").strip())
+        slug = quote(str(query or "").strip().replace(" ", "-"), safe="-")
+        page = max(1, int(page or 1))
+        urls = []
+        for template in values:
+            if not template:
+                continue
+            url = str(template).format(q=q, slug=slug, page=page)
+            if url not in urls:
+                urls.append(url)
+        return urls
+
     def build_search_url(self, query, page=1):
-        return self.search_template.format(
-            q=quote_plus(str(query or "").strip()),
-            slug=quote(str(query or "").strip().replace(" ", "-"), safe="-"),
-            page=max(1, int(page or 1)),
-        )
+        urls = self.build_search_urls(query, page=page)
+        return urls[0] if urls else self.base_url
 
     def search(self, query, price_max=None, limit=20, page=1):
         query = str(query or "").strip()
@@ -255,26 +320,53 @@ class _PublicRetailBase(MarketplaceConnector):
         if price_max_f is not None and price_max_f <= 0:
             return []
 
-        url = self.build_search_url(query, page=page)
+        now = time.monotonic()
+        blocked_until = float(_SOURCE_COOLDOWN_UNTIL.get(self.name, 0) or 0)
+        if blocked_until > now:
+            remaining = max(1, int(blocked_until - now))
+            print(f"[{self.name}] pause temporaire active ({remaining}s) -> requête ignorée")
+            return []
+        if blocked_until:
+            _SOURCE_COOLDOWN_UNTIL.pop(self.name, None)
+
+        urls = self.build_search_urls(query, page=page)
         print(f"[{self.name}] Recherche publique : {query} | page={page}")
         session = _session()
         try:
-            response = session.get(url, timeout=HTTP_TIMEOUT, allow_redirects=True)
-            if response.status_code != 200:
-                print(f"[{self.name}] HTTP {response.status_code} -> ignoré")
-                return []
-            content_type = str(response.headers.get("Content-Type") or "").lower()
-            if "text/html" not in content_type and "application/xhtml" not in content_type:
-                return []
-            text = response.text or ""
-            # Contrôles d'accès explicites : aucun contournement.
-            low = _norm(text[:12000])
-            if any(marker in low for marker in ("captcha", "access denied", "verify you are human", "cf challenge")):
-                print(f"[{self.name}] Contrôle d'accès détecté -> route ignorée")
-                return []
-            raw = parse_jsonld_products(text, self.base_url)
-            if not raw:
-                raw = parse_html_cards(text, self.base_url, self.allowed_path_hints)
+            raw = []
+            last_status = None
+            # Sur Render on limite à 2 routes candidates pour rester rapide.
+            route_budget = 2 if IS_RENDER else 3
+            for route_index, url in enumerate(urls[:route_budget], start=1):
+                try:
+                    response = _safe_public_get(session, url, self.base_url)
+                except requests.RequestException as exc:
+                    print(f"[{self.name}] Route {route_index} indisponible : {exc}")
+                    continue
+                if response is None:
+                    print(f"[{self.name}] redirection publique invalide/hors domaine -> route ignorée")
+                    continue
+                last_status = response.status_code
+                if response.status_code != 200:
+                    if response.status_code in {400, 403, 429}:
+                        print(f"[{self.name}] route {route_index} HTTP {response.status_code} -> ignorée")
+                    continue
+                content_type = str(response.headers.get("Content-Type") or "").lower()
+                if "text/html" not in content_type and "application/xhtml" not in content_type:
+                    continue
+                text = response.text or ""
+                low = _norm(text[:12000])
+                if any(marker in low for marker in ("captcha", "access denied", "verify you are human", "cf challenge")):
+                    print(f"[{self.name}] Contrôle d'accès détecté -> route ignorée")
+                    continue
+                raw = parse_jsonld_products(text, self.base_url)
+                if not raw:
+                    raw = parse_html_cards(text, self.base_url, self.allowed_path_hints)
+                if raw:
+                    break
+            if not raw and last_status in {400, 403, 429}:
+                _SOURCE_COOLDOWN_UNTIL[self.name] = time.monotonic() + _SOURCE_COOLDOWN_SECONDS
+                print(f"[{self.name}] aucune route publique exploitable -> pause temporaire")
             results = []
             seen = set()
             for item in raw:
@@ -349,3 +441,119 @@ class JDSportsConnector(_PublicRetailBase):
     base_url = "https://www.jdsports.fr"
     search_template = "https://www.jdsports.fr/search/{slug}/?page={page}"
     allowed_path_hints = ("/product/", "/produit/", "/p/")
+
+
+# V3.5.0 — FASHION / RUNNING EXPANSION
+# Boutiques vérifiées comme actives publiquement en août 2026. Les routes
+# ci-dessous restent volontairement conservatrices : 200 + carte produit
+# exploitable, sinon la source renvoie [] et passe en cooldown.
+
+class IRunConnector(_PublicRetailBase):
+    name = "i-Run"
+    display_name = "i-Run"
+    base_url = "https://www.i-run.fr"
+    search_templates = (
+        "https://www.i-run.fr/recherche.html?search={q}&page={page}",
+        "https://www.i-run.fr/recherche.html?q={q}&page={page}",
+        "https://www.i-run.fr/recherche.html?keywords={q}&page={page}",
+    )
+    allowed_path_hints = ("/chaussures", "/vetements", "/running", "/trail", ".html")
+
+
+class DirectRunningConnector(_PublicRetailBase):
+    name = "Direct Running"
+    display_name = "Direct Running"
+    base_url = "https://direct-running.fr"
+    search_templates = (
+        "https://direct-running.fr/recherche?controller=search&s={q}&page={page}",
+        "https://direct-running.fr/recherche?controller=search&search_query={q}&page={page}",
+    )
+    allowed_path_hints = ("/chaussures", "/vetements", "/running", "/trail", "/produit", "/product")
+
+
+class AlltricksConnector(_PublicRetailBase):
+    name = "Alltricks"
+    display_name = "Alltricks"
+    base_url = "https://www.alltricks.fr"
+    search_templates = (
+        "https://www.alltricks.fr/search?q={q}&page={page}",
+        "https://www.alltricks.fr/recherche?q={q}&page={page}",
+    )
+    allowed_path_hints = ("/running", "/chauss", "/vetement", "/product", "/produit", "/p-")
+
+
+class DeporvillageConnector(_PublicRetailBase):
+    name = "Deporvillage"
+    display_name = "Deporvillage"
+    base_url = "https://www.deporvillage.fr"
+    search_templates = (
+        "https://www.deporvillage.fr/search?q={q}&page={page}",
+        "https://www.deporvillage.fr/recherche?q={q}&page={page}",
+    )
+    allowed_path_hints = ("/chauss", "/vetement", "/running", "/trail", "/product", "/produit")
+
+
+class RunningPointConnector(_PublicRetailBase):
+    name = "Running Point"
+    display_name = "Running Point"
+    base_url = "https://www.running-point.fr"
+    search_templates = (
+        "https://www.running-point.fr/search?q={q}&page={page}",
+        "https://www.running-point.fr/recherche?q={q}&page={page}",
+    )
+    allowed_path_hints = ("/chauss", "/vetement", "/running", "/product", "/products/")
+
+
+class HardloopConnector(_PublicRetailBase):
+    name = "Hardloop"
+    display_name = "Hardloop"
+    base_url = "https://www.hardloop.fr"
+    search_templates = (
+        "https://www.hardloop.fr/search?q={q}&page={page}",
+        "https://www.hardloop.fr/recherche?q={q}&page={page}",
+    )
+    allowed_path_hints = ("/produits/", "/chauss", "/vetement", "/running", "/trail")
+
+
+class EkosportConnector(_PublicRetailBase):
+    name = "Ekosport"
+    display_name = "Ekosport"
+    base_url = "https://www.ekosport.fr"
+    search_templates = (
+        "https://www.ekosport.fr/search?q={q}&page={page}",
+        "https://www.ekosport.fr/recherche?q={q}&page={page}",
+    )
+    allowed_path_hints = ("/chauss", "/vetement", "/running", "/trail", "/p-")
+
+
+class CourirConnector(_PublicRetailBase):
+    name = "Courir"
+    display_name = "Courir"
+    base_url = "https://www.courir.com"
+    search_templates = (
+        "https://www.courir.com/fr/search?q={q}&page={page}",
+        "https://www.courir.com/fr/search?cgid=root&q={q}&page={page}",
+    )
+    allowed_path_hints = ("/fr/p/", "/fr/product", "/chauss", "/sneaker", "/vetement")
+
+
+class TwentyOneRunConnector(_PublicRetailBase):
+    name = "21RUN"
+    display_name = "21RUN"
+    base_url = "https://21run.com"
+    search_templates = (
+        "https://21run.com/fr/search?q={q}&page={page}",
+        "https://21run.com/fr/catalogsearch/result/?q={q}&p={page}",
+    )
+    allowed_path_hints = ("/fr/", "/chauss", "/vetement", "/running", "/product")
+
+
+class MisterRunningConnector(_PublicRetailBase):
+    name = "MisterRunning"
+    display_name = "MisterRunning"
+    base_url = "https://www.misterrunning.com"
+    search_templates = (
+        "https://www.misterrunning.com/en/search/?q={q}&p={page}",
+        "https://www.misterrunning.com/en/search/?term={q}&p={page}",
+    )
+    allowed_path_hints = ("/running", "/shoes", "/apparel", "/en/")

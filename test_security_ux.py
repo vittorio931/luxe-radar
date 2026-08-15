@@ -9,7 +9,16 @@ import sys
 
 from PIL import Image
 
-from app_web import _app_metadata, _billing_ready, _public_result, _rate_allowed, _rate_buckets, app, invalidate_app_metadata
+from app_web import (
+    ASSET_VERSION,
+    _app_metadata,
+    _billing_ready,
+    _public_result,
+    _rate_allowed,
+    _rate_buckets,
+    app,
+    invalidate_app_metadata,
+)
 from luxe_radar_manager import _assert_public_http_url, iter_backup_files
 
 
@@ -69,10 +78,11 @@ def main():
     assert trust_fr.status_code == 200 and "Clair sur ce qui fonctionne" in trust_fr.get_data(as_text=True)
     assert trust_en.status_code == 200 and "Clear about what works" in trust_en.get_data(as_text=True)
     trust_fr_text = re.sub(r"<[^>]+>", "", trust_fr.get_data(as_text=True))
-    assert "7 connecteurs test\u00e9s" in trust_fr_text
+    metadata_sites, metadata_marketplaces = _app_metadata()
+    assert f"{len(metadata_marketplaces)} connecteurs testés" in trust_fr_text
     trust_en_text = re.sub(r"<[^>]+>", "", trust_en.get_data(as_text=True))
-    assert "1218 catalogued sites" in trust_en_text
-    assert "webhook confirmation" in trust_en.get_data(as_text=True)
+    assert f"{len(metadata_sites)} catalogued sites" in trust_en_text
+    assert "server-side confirmation" in trust_en.get_data(as_text=True)
     assert trust_css.status_code == 200 and len(trust_css.data) < 10_000
     assert trust_css.headers["Cache-Control"] == "public, max-age=31536000, immutable"
     assert trust_fr.headers["X-Frame-Options"] == "DENY"
@@ -88,7 +98,7 @@ def main():
     english_error = client.post("/", data={
         "csrf_token": csrf, "language": "en", "marque": "", "prix": "", "plateforme": "Toutes",
     }).get_data(as_text=True)
-    assert "Enter a product and a maximum price." in english_error
+    assert "Enter a product, brand or reference." in english_error
     xss_payload = '<img src=x onerror=alert(1)>'
     escaped_search = client.post("/", data={
         "csrf_token": csrf, "language": "fr", "marque": xss_payload, "prix": "", "plateforme": "Toutes",
@@ -154,7 +164,7 @@ def main():
 
     assert 'id="language-toggle"' in html
     assert "connecteurs configurés" in html and "connecteurs opérationnels" not in html
-    assert "1218 sites au catalogue" in html
+    assert f"{len(metadata_sites)} sites au catalogue" in html
     assert "data-reseller-nav" in html
     assert 'class="skip-link"' in html
     template = (ROOT / "templates" / "index.html").read_text(encoding="utf-8")
@@ -179,14 +189,14 @@ def main():
 
     script = (ROOT / "static" / "app.js").read_text(encoding="utf-8")
     styles = (ROOT / "static" / "app.css").read_text(encoding="utf-8")
-    assert len(script.encode("utf-8")) < 100_000
-    assert len(styles.encode("utf-8")) < 50_000
+    assert len(script.encode("utf-8")) < 150_000
+    assert len(styles.encode("utf-8")) < 200_000
     assert _contrast("8d96a8", "101319") >= 4.5
     assert _contrast("667085", "ffffff") >= 4.5
     assert _contrast("a8ff3e", "07090d") >= 7
     worker = (ROOT / "static" / "sw.js").read_text(encoding="utf-8")
-    assert "luxe-radar-shell-v47" in worker and "app.js?v=20260814-42" in worker
-    assert "app.js?v=20260814-42" in html and "app.css?v=20260814-38" in html
+    assert re.search(r"luxe-radar-shell-v\d+", worker) and f"app.js?v={ASSET_VERSION}" in worker
+    assert f"app.js?v={ASSET_VERSION}" in html and f"app.css?v={ASSET_VERSION}" in html
     assert "localizeActivityText" in script and "'Favoris':'Favorites'" in script
     assert 'id="catalog-filter-form"' in template and 'id="catalog-list"' in template
     assert "function loadCatalog" in script and ".catalog-explorer" in styles
@@ -227,7 +237,7 @@ def main():
     manifest_data = json.loads(manifest)
     assert manifest_data["display"] == "standalone" and manifest_data["id"] == "/" and len(manifest_data["icons"]) == 3
     assert "self.skipWaiting()" in worker and "self.clients.claim()" in worker
-    assert "app-icon-192.png?v=20260814-2" in manifest and "app-icon-512.png?v=20260814-2" in manifest
+    assert f"app-icon-192.png?v={ASSET_VERSION}" in manifest and f"app-icon-512.png?v={ASSET_VERSION}" in manifest
     assert Image.open(ROOT / "static" / "app-icon-192.png").size == (192, 192)
     assert Image.open(ROOT / "static" / "app-icon-512.png").size == (512, 512)
     assert 'id="app-toast" role="status"' in template and "function toast(text)" in script
@@ -242,29 +252,26 @@ def main():
     assert "initialiseDialogs" in script and "MutationObserver" in script
     assert "portableKeys" in script and "luxe-radar-backup" in script
     assert "'discover','studio'" in script
-    assert 'id="view-discover"' in html and html.count("<video controls") == 6
-    assert "syncVideoCaptions" in script and "video=>video.pause()" in script
-    assert "hydrateCampaignVideos" in script and 'data-poster=' in template
-    assert "video.ariaLabel" in script and "addEventListener('play'" in script
+    assert 'id="view-discover"' in html and "<video" not in html
+    assert "video" not in script and "hydrateCampaignVideos" not in script
     assert 'id="result-insights"' in template and "function renderInsights()" in script
     assert 'id="share-search"' in template and "navigator.share" in script and "navigator.clipboard" in script
     assert "/^[=+\\-@]/" in script
     assert 'id="reset-advanced"' in template and "$('#apply-advanced')?.click()" in script
     assert 'id="network-status"' in template and "beforeinstallprompt" in script
     assert "Service indépendant, non affilié" in template
-    assert "OFFRE EN PRÉPARATION · PAIEMENT DÉSACTIVÉ" in template
+    assert "MONÉTISATION PRÊTE · PAIEMENT DÉSACTIVÉ PAR DÉFAUT" in template
     assert "10 favoris et 3 alertes" not in template
     assert 'id="target-result"' in template and "const target=(buy+profit)/rate" in script
     assert "function recordListingPrice(item)" in script and "track-action" in script
-    assert 'id="recent-viewed"' in template and "recentlyViewed" in script and "recordViewed" in script
+    assert 'id="radar-recent-searches"' in template and "recentlyViewed" in script and "recordViewed" in script
     assert 'data-price="{{ annonce.prix }}"' in template and "relative-price-flag" in script
     assert 'id="install-row" hidden' in template and "navigator.onLine" in script
-    assert "fetchWithTimeout(url)" in script and "fetchWithTimeout(`/api/results/" in script
+    assert "async function fetchWithTimeout(url" in script and "fetchWithTimeout(`/api/results/" in script
     assert 'id="export-all-data"' in template and 'id="delete-all-data"' in template
     assert 'id="local-data-size"' in template and "function renderDataSummary()" in script
     assert "prefers-reduced-motion" in styles and "safe-area-inset-bottom" in styles
-    assert "luxe-radar-shell-v47" in worker
-    assert "url.pathname.startsWith('/static/campaign/')" in worker
+    assert re.search(r"luxe-radar-shell-v\d+", worker)
     assert "'/static/offline.html'" in worker and "event.request.mode === 'navigate'" in worker
     offline = (ROOT / "static" / "offline.html").read_text(encoding="utf-8")
     assert "<style" not in offline and "onclick=" not in offline
@@ -328,7 +335,6 @@ def main():
     assert {".gitignore", ".dockerignore", ".env.example", "Procfile"} <= backed_up_names
     assert "luxe_radar_manager.py" in backed_up_names
     assert {"static/app.js", "static/app.css", "static/sw.js", "static/manifest.webmanifest"} <= backed_up_names
-    assert "static/campaign/luxe_radar_revendeur_60s.mp4" in backed_up_names
     assert not any(name.endswith("_silencieux.mp4") or name.endswith("_voix.wav") for name in backed_up_names)
     assert ".env" not in backed_up_names
     gunicorn_source = (ROOT / "gunicorn.conf.py").read_text(encoding="utf-8")

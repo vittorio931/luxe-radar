@@ -1,41 +1,33 @@
-LUXE RADAR V3.0.2 — CHECKLIST MISE EN PUBLIC
-============================================
+LUXE RADAR V3.2.0 — CHECKLIST MISE EN PUBLIC
 
 AVANT PUSH
-[ ] Le ZIP a été extrait avec app_web.py directement à la racine.
-[ ] Aucun .env, .pem ou .key n'est présent dans le dépôt.
-[ ] /api/version doit annoncer 3.0.2 et asset 20260815-302.
-[ ] Test local : Nike P-6000.
-[ ] Test local : On Cloud 5.
-[ ] Test local : Columbia Tech Wind.
-[ ] Vérifier le scroll sur plusieurs vagues et l'absence de rafale 429.
-[ ] Vérifier Favoris, Faible risque, Bons plans et Créer une alerte.
-[ ] Vérifier PC + mobile.
+[ ] Aucun .env dans le dépôt ou le ZIP.
+[ ] python test_v320_nova_release.py
+[ ] python test_v303_result_visibility.py
+[ ] python test_v302_performance_hotfix.py
+[ ] python test_v301_public_release.py
+[ ] python test_search_understanding_v288.py
+[ ] python test_product_recognition_v287.py
+[ ] node --check static/app.js
+[ ] python -m py_compile app_web.py radar_engine.py product_recognition.py search_understanding.py marketplaces/connectors/*.py
+[ ] git diff --check
+
+LOCAL
+[ ] /api/version annonce 3.2.0 / 20260815-320.
+[ ] On Cloud 5 : Cloud 6 / Cloud X 4 restent masqués en mode Précis.
+[ ] Le mode Explorer peut les révéler uniquement comme « à vérifier ».
+[ ] Scroll infini : pas de rafale 202/429.
+[ ] Comparateur live et bouton Hors sujet fonctionnent.
+[ ] Thèmes/couleurs + grille/liste fonctionnent PC/mobile.
 
 RENDER
-Build : python -m pip install -r requirements.txt && python -m playwright install chromium
-Start : gunicorn --config gunicorn.conf.py wsgi:application
-Health : /api/health
-
-Variables minimales / importantes
-- LUXE_RADAR_ENV=production
-- PLAYWRIGHT_BROWSERS_PATH=0
-- WEB_CONCURRENCY=1
-- EBAY_CLIENT_ID=<secret Render>
-- EBAY_CLIENT_SECRET=<secret Render>
-- LUXE_RADAR_SECRET_KEY=<générée par Render>
-
-PAIEMENT
-- Ne PAS définir LUXE_RADAR_BILLING_ENABLED=1 pour cette mise en public.
-- Le checkout reste volontairement OFF tant que webhooks + provisionnement ne sont pas finalisés.
-
-APRÈS DÉPLOIEMENT
+[ ] Build : python -m pip install -r requirements.txt && python -m playwright install chromium
+[ ] Start : gunicorn --config gunicorn.conf.py wsgi:application
+[ ] Health check : /api/health
+[ ] Déploiement Live sur le commit attendu.
 [ ] /api/health = 200.
-[ ] /api/version = 3.0.2 / 20260815-302.
-[ ] Faire un Ctrl+F5 une fois si l'ancien service worker reste en cache.
-[ ] Tester une recherche réelle et ouvrir au moins une annonce.
-[ ] Tester le scroll sur mobile.
-[ ] Vérifier qu'une source bloquée n'empêche pas les autres de répondre.
+[ ] /api/version = 3.2.0 / 20260815-320.
+[ ] Recherche publique On Cloud 5 : résultats pertinents avant les cartes « à vérifier ».
 
-[ ] Sur Render, vérifier qu’une recherche longue ne lance pas Zalando page 3.
-[ ] Si Zalando timeout/403, vérifier que les expansions suivantes continuent sans nouveau blocage long.
+ROLLBACK
+[ ] Le commit V3.0.2 public reste disponible dans l'historique Git en cas de régression.

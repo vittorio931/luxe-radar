@@ -1,0 +1,25 @@
+{
+  "version": "3.7.0",
+  "name": "Instant Search OS",
+  "asset_version": "20260815-370",
+  "features": [
+    "immediate HTML for cold and warm searches",
+    "reusable global SQLite catalogue with FTS5 fallback",
+    "header/home/radar indexed search assistance",
+    "optional maximum price",
+    "smart source prioritisation for running and fashion/luxury",
+    "pre-index brand/model quality gates",
+    "safe same-domain retail redirects",
+    "automatic V3.6 exact-cache migration"
+  ],
+  "safety": {
+    "stripe_default": "off",
+    "captcha_bypass": false,
+    "access_control_bypass": false,
+    "env_in_artifact": false
+  },
+  "limits": {
+    "max_index_results_per_query": 5000,
+    "catalogue_is_real_only": true
+  }
+}

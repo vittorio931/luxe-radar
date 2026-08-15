@@ -274,6 +274,12 @@ class Ali1688Connector(MarketplaceConnector):
     enabled = True
     currency = "CNY"
 
+    supports_pagination = False
+    expansion_page_size = 30
+    expansion_recall_cap = 30
+    max_pages = 1
+    cooldown_seconds = 0.6
+
     def search(self, query, price_max=None, limit=20):
         query = " ".join(str(query or "").split())
         if not query:

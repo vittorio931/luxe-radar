@@ -25,8 +25,8 @@ _DEFAULT_BASE_URL = "http://localhost:5000"
 _CACHE_PRICES = {}
 
 PLAN_META = {
-    "pro": {"name": "Radar Pro"},
-    "reseller": {"name": "Radar Reseller"},
+    "pro": {"name": "LUXE RADAR Premium"},
+    "reseller": {"name": "LUXE RADAR Pro"},
 }
 
 
@@ -82,7 +82,7 @@ def _ensure_price(plan, cycle):
     cached = _CACHE_PRICES.get(cache_key)
     if cached:
         return cached
-    lookup_key = f"luxe_radar_{plan}_{cycle}"
+    lookup_key = f"luxe_radar_v340_{plan}_{cycle}"
     existing = _api("/prices", {"lookup_keys[]": lookup_key, "limit": "1"}, method="GET")
     prices = existing.get("data") or []
     if prices:

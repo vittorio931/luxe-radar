@@ -29,12 +29,11 @@ La suite actuelle exécute cinq fichiers :
 - `test_infinite_scroll.py` ;
 - `test_catalog_massive.py` ;
 - `test_security_ux.py` ;
-- `test_campaign_media.py`.
+- `test_v301_connector_import.py`.
 
-Le dernier vérifie les six MP4 de 60 secondes, les pistes AAC à 44,1 kHz,
-l’attribution SIWIS/CC BY 4.0, les miniatures WebP, les sous-titres FR/EN,
-les requêtes partielles HTTP 206, le cache public limité et les marqueurs de
-chargement progressif par visibilité.
+V4 : les vidéos de campagne ont été retirées du catalogue (aucun MP4, aucun
+`<video>` ni KIT CRÉATEUR). Le test vidéo `test_campaign_media.py` a été supprimé
+avec les assets `static/campaign/`.
 
 Pour une installation de développement reproductible :
 

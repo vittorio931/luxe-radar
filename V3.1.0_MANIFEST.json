@@ -1,0 +1,107 @@
+{
+  "version": "3.1.0",
+  "asset_version": "20260815-310",
+  "base_public_version": "3.0.2",
+  "purpose": "Signature UI + V3.0.3 result visibility + Render source-priority/reliability hotfix",
+  "contains_v303_visibility_fix": true,
+  "no_access_control_bypass": true,
+  "files": [
+    {
+      "path": "app_web.py",
+      "size": 71469,
+      "sha256": "b8c04343336feceae949c1c6f8ccf97b7b6191c1486aed96eefed0170c7af827"
+    },
+    {
+      "path": "README.md",
+      "size": 2633,
+      "sha256": "cd84b7aa005195a2d83bf62f52a50fccb52f9add65c738378d1a014a4346ad80"
+    },
+    {
+      "path": "PUBLIC-DEPLOY-CHECKLIST.txt",
+      "size": 1489,
+      "sha256": "52c0cef29d9a501746fa92a69048e3faf26580f9daf91f19b54b05114def150a"
+    },
+    {
+      "path": "README-V3.1.0-SIGNATURE.txt",
+      "size": 1818,
+      "sha256": "c5dbd4d4e6fb7d7114d35796f5e6526dae6fa14aec04fa4cfb721f5290dc08ee"
+    },
+    {
+      "path": "templates/index.html",
+      "size": 55775,
+      "sha256": "fc19cd77bfebd882eae25709ec95017299d00026aba5b9a22dd0dd57ac1dcfeb"
+    },
+    {
+      "path": "static/app.css",
+      "size": 108412,
+      "sha256": "4d2d7d147e8aeae7253aa3ab14d4179376323acbb05bc910e6af5e5f7f12f163"
+    },
+    {
+      "path": "static/app.js",
+      "size": 124364,
+      "sha256": "33df4d1fcadfd03dc83bc6b20896a6a689c6487c7e0122c2cbadd3c66b898a18"
+    },
+    {
+      "path": "static/sw.js",
+      "size": 2354,
+      "sha256": "87fb338487fd223773f17cea0535de6d508763bebd1395d419a6f4119b8c0b42"
+    },
+    {
+      "path": "static/manifest.webmanifest",
+      "size": 1255,
+      "sha256": "c14e69ce8ac3af4382e3ff3ab71346b3282609d919bdd08e17243fa28a37c6d3"
+    },
+    {
+      "path": "marketplaces/connectors/asos.py",
+      "size": 40223,
+      "sha256": "02f7844c3e378d8be2c840d17d92bad73c831f12155e4b806d7507dc2888d62a"
+    },
+    {
+      "path": "marketplaces/connectors/aliexpress.py",
+      "size": 23301,
+      "sha256": "e4a19da9a9a8108b5046057486812c199067793b60ae544a5eb9d7fd394bf38f"
+    },
+    {
+      "path": "marketplaces/connectors/retail_public.py",
+      "size": 14311,
+      "sha256": "41274eccba15ccbf94b44028b7bd8679ba8a1a44c4376ecf9c8156c162c7d148"
+    },
+    {
+      "path": "test_v301_public_release.py",
+      "size": 3956,
+      "sha256": "ab8a7c829742922a4b702d2558d545d717b808d63334b735d0e9adf16f0e61b1"
+    },
+    {
+      "path": "test_v302_performance_hotfix.py",
+      "size": 1803,
+      "sha256": "17879d050f521520487e656b8ba9076977196ef794c4b4ffd7010565f8498b8c"
+    },
+    {
+      "path": "test_v303_result_visibility.py",
+      "size": 1234,
+      "sha256": "d97a1c2de7a656c9570ffa63bd9253e927e01fff3cd661730ff03c14c2aab709"
+    },
+    {
+      "path": "test_v310_signature_release.py",
+      "size": 3904,
+      "sha256": "f965523b724dba07eed17e066cc4a3b54a6325f25353419b41cbab780401d013"
+    }
+  ],
+  "validation": [
+    "test_v310_signature_release.py",
+    "test_v301_public_release.py",
+    "test_v302_performance_hotfix.py",
+    "test_v303_result_visibility.py",
+    "test_search_understanding_v288.py",
+    "test_product_recognition_v287.py",
+    "test_retail_public_connectors.py",
+    "test_asos_connector.py",
+    "test_cdiscount_connector.py",
+    "test_relevance_v282.py",
+    "test_search_intent_v27.py",
+    "node --check static/app.js",
+    "python -m py_compile app_web.py radar_engine.py product_recognition.py search_understanding.py connector_registry.py marketplaces/connectors/*.py",
+    "Jinja parse templates/index.html",
+    "tinycss2 parse static/app.css"
+  ]
+}

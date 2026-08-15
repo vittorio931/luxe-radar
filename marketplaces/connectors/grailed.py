@@ -27,6 +27,28 @@ IS_RENDER = bool(
 )
 
 
+# V3.7.x : cooldown anti-challenge / anti-blocage. Quand Grailed répond 403/429
+# ou affiche un challenge headless, on cesse d'envoyer des requêtes pendant
+# quelques minutes au lieu de marteler la protection. Aucun contournement :
+# on retire juste temporairement Grailed des sources actives.
+_COOLDOWN_SECONDS = int(os.environ.get("LUXE_RADAR_GRAILED_COOLDOWN", "600") or 600)
+_COOLDOWN_UNTIL = 0.0
+
+
+def _grailed_blocked():
+    return time.time() < _COOLDOWN_UNTIL
+
+
+def _grailed_mark_blocked(reason=""):
+    global _COOLDOWN_UNTIL
+    if time.time() >= _COOLDOWN_UNTIL:
+        _COOLDOWN_UNTIL = time.time() + _COOLDOWN_SECONDS
+        print(
+            f"[Grailed] Blocage détecté ({reason}) : mise en pause "
+            f"{_COOLDOWN_SECONDS}s pour ne pas insister"
+        )
+
+
 def _recall_mode_enabled():
     return str(os.environ.get("LUXE_RADAR_RECALL_MODE", "1")).strip().lower() in {
         "1", "true", "yes", "on",
@@ -1380,6 +1402,11 @@ def tester_routes_browse_http(
         except Exception:
             continue
 
+        if response.status_code in (403, 429):
+            # Protection active : on marque le blocage et on s'arrête.
+            _grailed_mark_blocked(str(response.status_code))
+            break
+
         if response.status_code != 200:
             continue
 
@@ -1789,7 +1816,7 @@ def _collecter_cartes(
                 page.goto(
                     route,
                     wait_until="domcontentloaded",
-                    timeout=6500 if IS_RENDER else 30000,
+                    timeout=6500 if IS_RENDER else 15000,
                 )
             except Exception as e:
                 print(
@@ -2000,6 +2027,9 @@ def decouvrir_cartes_playwright(
                 "[Grailed] Feed vide/bloqué en headless -> fallback visible "
                 f"ignoré {suffixe}"
             )
+            # V3.7.x : feed headless vide = challenge probable. On pause la
+            # source au lieu de retenter immédiatement.
+            _grailed_mark_blocked("challenge headless")
             return []
 
         print(
@@ -2073,6 +2103,12 @@ class GrailedConnector(
     enabled = True
     currency = "USD"
 
+    supports_pagination = False
+    expansion_page_size = 36
+    expansion_recall_cap = 36
+    max_pages = 1
+    cooldown_seconds = 0.5
+
     def search(
         self,
         query,
@@ -2084,6 +2120,14 @@ class GrailedConnector(
         ).strip()
 
         if not query:
+            return []
+
+        # V3.7.x : si Grailed est en cooldown (403/429/challenge récents),
+        # on répond vide immédiatement au lieu de marteler la protection.
+        if _grailed_blocked():
+            print(
+                "[Grailed] Source en pause (cooldown) -> aucun appel réseau"
+            )
             return []
 
         try:
@@ -2141,6 +2185,9 @@ class GrailedConnector(
             print(
                 "[Grailed] Aucune route /browse candidate n'a répondu 200"
             )
+            # V3.7.x : si la cause est un 403/429, ne pas insister maintenant.
+            if _grailed_blocked():
+                return []
             return []
 
         liens = list(

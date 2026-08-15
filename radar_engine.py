@@ -31,6 +31,9 @@ def _env_int(name, default, minimum=1, maximum=300):
     return max(minimum, min(value, maximum))
 
 
+_SOURCE_MAX_CAP = _env_int("LUXE_RADAR_SOURCE_MAX_CAP", 160, minimum=30, maximum=1000)
+
+
 def _recall_mode_enabled():
     """V2.8.11 : couverture maximale sans fabriquer d'annonces.
 
@@ -1486,7 +1489,7 @@ def rechercher_vinted(
     # extraites et on sort proprement dès que le temps maximal est atteint.
     vinted_total_budget_s = _env_int(
         "LUXE_RADAR_VINTED_TOTAL_SECONDS",
-        9 if _is_render_runtime() else 14,
+        8 if _is_render_runtime() else 10,
         minimum=6,
         maximum=25,
     )
@@ -1510,13 +1513,13 @@ def rechercher_vinted(
 
             vinted_navigation_timeout_ms = _env_int(
                 "LUXE_RADAR_VINTED_TIMEOUT_MS",
-                6500 if _is_render_runtime() else 9000,
+                6000 if _is_render_runtime() else 7000,
                 minimum=2500,
                 maximum=12000,
             )
             vinted_settle_ms = _env_int(
                 "LUXE_RADAR_VINTED_SETTLE_MS",
-                250 if _is_render_runtime() else 900,
+                200 if _is_render_runtime() else 450,
                 minimum=0,
                 maximum=1500,
             )
@@ -1697,10 +1700,11 @@ def rechercher_vinted(
                     marketplace="Vinted",
                     extra_text=texte_annonce,
                 )
-                # V2.8.11 : en couverture maximale, on garde les vraies cartes
-                # Vinted même si la correspondance n'est pas confirmée. Le
-                # moteur central les classe ensuite « À vérifier ».
-                if not reconnaissance_vinted.accepted and not _recall_mode_enabled():
+                # V3.7.x : une carte Vinted classée « rejet » (conflit dur ou
+                # score sous le seuil) ne doit jamais entrer dans le catalogue,
+                # même en mode couverture maximale. Le mode recall conserve
+                # uniquement les cartes « possible ».
+                if reconnaissance_vinted.level == "rejet":
                     continue
 
                 # On conserve le garde-fou des annonces explicitement
@@ -2083,7 +2087,12 @@ def _analyser_resultat_multi(
     )
 
     identite_non_confirmee = not reconnaissance.accepted
-    if identite_non_confirmee and not _recall_mode_enabled():
+    # V3.7.x : une correspondance « rejet » ne doit JAMAIS entrer dans le
+    # catalogue, même en mode couverture maximale. Le mode recall conserve
+    # uniquement les cartes « possible », jamais les rejets fermes (conflit
+    # dur ou score sous le seuil). Une offre faible n'a pas de place dans le
+    # catalogue confirmé.
+    if reconnaissance.level == "rejet":
         return None
 
     prix = _safe_float(
@@ -2154,17 +2163,17 @@ def _analyser_resultat_multi(
     for conflit in reconnaissance.conflicts:
         alertes.append(f"Conflit identité : {conflit}")
 
-    if identite_non_confirmee:
-        raisons.append("Annonce réelle conservée en mode couverture maximale")
-        alertes.append("Correspondance produit non confirmée : à filtrer manuellement")
-
     resultat["score_identite"] = reconnaissance.score
     resultat["niveau_identite"] = reconnaissance.level
-    resultat["correspondance_verifiee"] = not identite_non_confirmee
+    resultat["correspondance_verifiee"] = True
     resultat["identite_marque"] = reconnaissance.profile.brand
     resultat["identite_modele"] = reconnaissance.profile.model
     resultat["identite_type"] = reconnaissance.profile.type_name
     resultat["identite_descripteurs"] = list(reconnaissance.profile.descriptors)
+    # V3.2.0 : explication courte exposable à l'interface sans publier tout le
+    # diagnostic interne. Utile pour comprendre pourquoi une carte est gardée.
+    resultat["explication_pertinence"] = " · ".join(list(reconnaissance.reasons)[:3])[:200]
+    resultat["conflit_pertinence"] = " · ".join(list(reconnaissance.conflicts)[:2])[:200]
 
     modele = resultat.get("modele") or reconnaissance.profile.model or trouver_modele(query, titre_n)
     if modele:
@@ -2393,6 +2402,29 @@ def _analyser_resultat_multi(
             100,
         ),
     )
+
+    # V3.7.x : couleur/sexe demandés dans la requête = léger malus de rang si
+    # absents du titre. Jamais un rejet (on évite les faux négatifs) : c'est une
+    # préférence d'ordre, le gate strict vit côté index/pertinence.
+    try:
+        from search_intent import (
+            COLOR_ALIASES,
+            GENDER_ALIASES,
+            parse_search_intent,
+        )
+        _intent = parse_search_intent(query)
+        if _intent.color and not any(
+            contient_mot(titre, alias)
+            for alias in COLOR_ALIASES.get(_intent.color, ())
+        ):
+            score = max(0, score - 6)
+        if _intent.gender and not any(
+            contient_mot(titre, alias)
+            for alias in GENDER_ALIASES.get(_intent.gender, ())
+        ):
+            score = max(0, score - 4)
+    except Exception:
+        pass
 
     if categorie_forcee:
         categorie = categorie_forcee
@@ -2753,18 +2785,29 @@ def rechercher_multi_marketplaces(
     if _is_render_runtime() and len(plateformes) > 1:
         priorite_prod = {
             "eBay": 0,
-            "67behaviour": 1,
-            "SSENSE": 2,
-            "Cdiscount": 3,
-            "AliExpress": 4,
-            "DHgate": 5,
+            "i-Run": 1,
+            "Direct Running": 2,
+            "Alltricks": 3,
+            "Deporvillage": 4,
+            "Zalando": 5,
             "ASOS": 6,
-            "Spartoo": 7,
-            "Footshop": 8,
-            "JD Sports": 9,
-            "1688": 10,
-            "Vinted": 11,
-            "Grailed": 12,
+            "21RUN": 7,
+            "Running Point": 8,
+            "MisterRunning": 9,
+            "Hardloop": 10,
+            "Ekosport": 11,
+            "Courir": 12,
+            "Vinted": 13,
+            "SSENSE": 14,
+            "Cdiscount": 15,
+            "Spartoo": 16,
+            "Footshop": 17,
+            "JD Sports": 18,
+            "AliExpress": 19,
+            "DHgate": 20,
+            "67behaviour": 21,
+            "1688": 22,
+            "Grailed": 23,
         }
         plateformes = sorted(
             plateformes,
@@ -2777,10 +2820,12 @@ def rechercher_multi_marketplaces(
         # V2.9.2 : le web appelle déjà chaque source séparément et sait demander
         # la page suivante. Doubler systématiquement le lot faisait analyser
         # jusqu'à 100 cartes pour n'en afficher que 25/50.
-        limite_par_plateforme = min(100, max(30, limite_int))
+        # V3.7 : le plafond est paramétrable (LUXE_RADAR_SOURCE_MAX_CAP, défaut 160)
+        # pour laisser SSENSE et ASOS remonter bien plus de résultats.
+        limite_par_plateforme = min(_SOURCE_MAX_CAP, max(30, limite_int))
     else:
         limite_par_plateforme = min(
-            100,
+            _SOURCE_MAX_CAP,
             max(50, (limite_int * 2 + nombre_plateformes - 1) // nombre_plateformes),
         )
 

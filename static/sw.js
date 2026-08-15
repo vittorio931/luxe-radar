@@ -1,12 +1,12 @@
-const CACHE = 'luxe-radar-shell-v302';
+const CACHE = 'luxe-radar-shell-v370';
 const SHELL = [
-  '/static/app.css?v=20260815-302',
-  '/static/app.js?v=20260815-302',
-  '/static/risk.js?v=20260815-302',
+  '/static/app.css?v=20260815-370',
+  '/static/app.js?v=20260815-370',
+  '/static/risk.js?v=20260815-370',
   '/static/app-icon.svg',
-  '/static/app-icon-192.png?v=20260815-302',
-  '/static/app-icon-512.png?v=20260815-302',
-  '/static/manifest.webmanifest?v=20260815-302',
+  '/static/app-icon-192.png?v=20260815-370',
+  '/static/app-icon-512.png?v=20260815-370',
+  '/static/manifest.webmanifest?v=20260815-370',
   '/static/offline.html',
   '/static/offline.css',
   '/static/offline.js'
@@ -56,8 +56,7 @@ self.addEventListener('fetch', event => {
   if (
     event.request.method !== 'GET' ||
     url.origin !== self.location.origin ||
-    !url.pathname.startsWith('/static/') ||
-    url.pathname.startsWith('/static/campaign/')
+    !url.pathname.startsWith('/static/')
   ) return;
 
   // Les assets sont versionnés. Cache-first évite de retélécharger le JS/CSS

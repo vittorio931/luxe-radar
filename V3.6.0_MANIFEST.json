@@ -1,0 +1,13 @@
+{
+  "version": "3.6.0",
+  "asset_version": "20260815-360",
+  "release": "INDEX ENGINE",
+  "architecture": "hybrid index-first with live background refresh",
+  "index_backend": "SQLite stdlib",
+  "index_query_limit": 5000,
+  "instant_threshold_default": 12,
+  "warm_queries": ["Stone Island", "Nike P-6000", "On Cloud 5"],
+  "new_files": ["index_engine.py", "warm_index.py", "test_v360_index_engine.py", "test_v360_hybrid_release.py"],
+  "payment_default": "off",
+  "anti_bot_bypass": false
+}

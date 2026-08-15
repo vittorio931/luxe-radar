@@ -1,0 +1,14 @@
+{
+  "version": "3.4.0",
+  "asset_version": "20260815-340",
+  "base": "3.3.0",
+  "features": [
+    "Free / Premium / Pro pricing",
+    "Automatic Radar local beta",
+    "billing off by default",
+    "Stripe lookup key versioning",
+    "uiVersion migration fix"
+  ],
+  "billing_enabled_by_default": false,
+  "contains_env": false
+}

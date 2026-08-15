@@ -5,7 +5,9 @@ from datetime import timedelta
 import logging
 import math
 import secrets
+import time
 import unicodedata
+import hashlib
 from threading import Lock, Semaphore
 from time import monotonic, perf_counter
 from uuid import uuid4
@@ -24,18 +26,34 @@ except Exception:
     pass
 
 import billing_stripe
+import index_engine
 
 from connector_registry import get_available_connectors
+from marketplaces.connectors import get_connector
 from marketplaces.catalog import get_sites
 from radar_engine import rechercher_multi_marketplaces, _cle_unique_multi, _selection_diversifiee, _analyser_resultat_multi
 from image_similarity import MAX_IMAGE_BYTES, download_listing_image, image_feature, similarity
 from search_understanding import understand_query, suggest_queries, canonicalize_search_query
 from marketplaces.connectors.universal import discover_catalog_wave
 
+try:
+    from search_intent import parse_search_intent as _parse_intent_impl
+except Exception:  # pragma: no cover - observability must never crash the app
+    _parse_intent_impl = None
+
+
+def _parse_intent(query):
+    if _parse_intent_impl is None:
+        return None
+    try:
+        return _parse_intent_impl(query)
+    except Exception:
+        return None
+
 
 app = Flask(__name__)
-APP_VERSION = "3.0.2"
-ASSET_VERSION = "20260815-302"
+APP_VERSION = "3.7.0"
+ASSET_VERSION = "20260815-370"
 IS_PRODUCTION = os.environ.get("LUXE_RADAR_ENV", "development").lower() == "production"
 IS_RENDER_RUNTIME = bool(
     os.environ.get("RENDER")
@@ -74,10 +92,11 @@ PUBLIC_RESULT_FIELDS = {
     "condition", "livraison", "prix_total", "vendeur", "note_vendeur", "source",
     "risque_contrefacon", "alerte_authenticite", "signaux_authenticite",
     "score_identite", "niveau_identite", "correspondance_verifiee",
+    "explication_pertinence", "conflit_pertinence",
 }
 REFERENCE_CATEGORY_ORDER = {"EXCELLENTE AFFAIRE": 0, "BONNE AFFAIRE": 1, "INTERESSANTE": 2, "A VERIFIER": 3, "DOUTEUSE": 4, "A IGNORER": 5}
 SERVER_MESSAGES = {
-    "missing_fields": {"fr": "Indique une marque et un prix maximum.", "en": "Enter a product and a maximum price."},
+    "missing_fields": {"fr": "Indique un produit, une marque ou une référence.", "en": "Enter a product, brand or reference."},
     "invalid_price": {"fr": "Prix invalide.", "en": "Invalid price."},
     "price_range": {"fr": "Le prix doit être compris entre 0 et 1 000 000.", "en": "The price must be between 0 and 1,000,000."},
     "invalid_marketplace": {"fr": "Marketplace invalide.", "en": "Invalid marketplace."},
@@ -188,8 +207,6 @@ def security_headers(response):
         response.headers["Strict-Transport-Security"] = "max-age=31536000; includeSubDomains"
     if request.path == "/" or request.path.startswith("/api/"):
         response.headers["Cache-Control"] = "no-store"
-    elif request.path.startswith("/static/campaign/"):
-        response.headers["Cache-Control"] = "public, max-age=86400"
     elif request.path.startswith("/static/") and request.args.get("v"):
         response.headers["Cache-Control"] = "public, max-age=31536000, immutable"
     elif request.path.startswith("/static/"):
@@ -234,6 +251,7 @@ def health():
         "connectors": len(marketplaces),
         "catalog_sites": len(sites),
         "billing_ready": _billing_ready(),
+        "index_enabled": index_engine.index_enabled(),
     })
 
 
@@ -246,6 +264,7 @@ def app_version():
         "progressive": True,
         "progressive_workers": _PROGRESSIVE_WORKERS,
         "coverage_mode": "max",
+        "index_enabled": index_engine.index_enabled(),
     })
 
 
@@ -354,11 +373,60 @@ def _catalog_search_key(value):
 def search_suggestions():
     query = request.args.get("q", "").strip()[:120]
     if len(query) < 2:
-        return jsonify({"understanding": None, "suggestions": []})
+        return jsonify({"understanding": None, "suggestions": [], "catalog_total": 0, "preview": []})
     info = understand_query(query)
+    curated = suggest_queries(query, limit=8)
+    indexed_suggestions = []
+    indexed = index_engine.IndexSearch([], 0, None, index_engine.canonical_query(query))
+    if index_engine.index_enabled():
+        try:
+            indexed_suggestions = index_engine.suggest(query, limit=8)
+            indexed = index_engine.search(query, identity="confirmed", limit=6)
+        except Exception as exc:
+            app.logger.debug("Aide de recherche indexée indisponible: %s", str(exc)[:160])
+    suggestions = []
+    seen = set()
+    # Correction / modèles connus d'abord, puis vraies offres déjà présentes
+    # dans le catalogue. Les compteurs viennent uniquement de données indexées.
+    for item in [*curated, *indexed_suggestions]:
+        if not isinstance(item, dict):
+            continue
+        value = str(item.get("value") or item.get("label") or "").strip()[:180]
+        if not value:
+            continue
+        key = value.casefold()
+        if key in seen:
+            continue
+        seen.add(key)
+        clean = {
+            "value": value,
+            "label": str(item.get("label") or value)[:180],
+            "kind": str(item.get("kind") or "suggestion")[:40],
+        }
+        if item.get("count") is not None:
+            clean["count"] = max(0, int(item.get("count") or 0))
+        if item.get("price") not in (None, ""):
+            price = float(item.get("price") or 0)
+            if math.isfinite(price) and price > 0:
+                clean["price"] = round(price, 2)
+        suggestions.append(clean)
+        if len(suggestions) >= 10:
+            break
+    preview = []
+    for item in indexed.results[:6]:
+        public = _public_result(item)
+        preview.append({
+            "title": str(public.get("titre") or public.get("title") or "")[:180],
+            "marketplace": str(public.get("marketplace") or "")[:80],
+            "price": _safe_number(public.get("prix_total", public.get("prix")), 0),
+            "image": str(public.get("image") or "")[:2048],
+        })
     return jsonify({
         "understanding": info.to_dict(),
-        "suggestions": suggest_queries(query, limit=8),
+        "suggestions": suggestions,
+        "catalog_total": int(indexed.total),
+        "catalog_age_seconds": indexed.age_seconds,
+        "preview": preview,
     })
 
 
@@ -414,20 +482,21 @@ def _bounded_env_int(name, default, minimum, maximum):
 INITIAL_RESULTS = 50
 MOBILE_INITIAL_RESULTS = 25
 RESULT_BATCH_SIZE = 50
+SEARCH_PAGE_SIZE = 50
 SEARCH_RESULT_LIMIT = _bounded_env_int(
     "LUXE_RADAR_SEARCH_RESULT_LIMIT",
-    500 if IS_RENDER_RUNTIME else 1000,
-    100,
-    2000,
+    5000,
+    500,
+    10000,
 )
 MAX_BATCH_SIZE = 200
 IMAGE_COMPARE_LIMIT = _bounded_env_int("LUXE_RADAR_IMAGE_COMPARE_LIMIT", 64, 16, 120)
 CACHE_TTL_SECONDS = (20 if IS_RENDER_RUNTIME else 30) * 60
 MAX_CACHED_SEARCHES = _bounded_env_int(
     "LUXE_RADAR_MAX_CACHED_SEARCHES",
-    8 if IS_RENDER_RUNTIME else 20,
-    4,
-    50,
+    5 if IS_RENDER_RUNTIME else 12,
+    3,
+    30,
 )
 
 # Pipeline progressif V2.8.6. Seules deux sources HTTP éprouvées construisent
@@ -436,26 +505,100 @@ MAX_CACHED_SEARCHES = _bounded_env_int(
 # bloquées ensuite. Une recherche ciblée sur UNE marketplace reste synchrone.
 PROGRESSIVE_FAST_SOURCES = ("eBay",)
 PROGRESSIVE_BACKGROUND_SOURCES = (
-    # V3.0.2 : priorité aux sources HTTP les plus stables. Zalando reste actif
-    # mais passe après les sources rapides : un 403/timeout Zalando ne doit plus
-    # retarder les premières vagues utiles. Aucun blocage n'est contourné.
-    "SSENSE", "ASOS", "AliExpress", "DHgate",
-    "Spartoo", "Footshop", "JD Sports", "Cdiscount", "Zalando",
-    "67behaviour", "1688", "Grailed", "Vinted",
+    # V3.5.0 : LUXE RADAR devient un comparateur mode/running spécialisé.
+    # V3.7 réordonne ensuite dynamiquement cette liste selon l'intention.
+    "i-Run", "Direct Running", "Alltricks", "Deporvillage",
+    "Vinted", "Zalando", "ASOS", "21RUN", "Running Point",
+    "MisterRunning", "Hardloop", "Ekosport", "Courir", "SSENSE",
+    "Cdiscount", "Spartoo", "Footshop", "JD Sports",
+    "AliExpress", "DHgate", "67behaviour", "1688", "Grailed",
 )
+
+_RUNNING_BRANDS = {
+    "On", "Asics", "Hoka", "Salomon", "Saucony", "Mizuno", "Brooks",
+    "New Balance", "Nike", "Adidas", "Puma", "Under Armour",
+}
+_LUXURY_FASHION_BRANDS = {
+    "Stone Island", "C.P. Company", "Moncler", "Gucci", "Prada", "Dior",
+    "Balenciaga", "Versace", "Burberry", "Off-White", "Supreme", "Stussy",
+    "Palace", "Amiri", "Ralph Lauren", "Lacoste", "Carhartt", "Arc'teryx",
+    "The North Face", "Patagonia",
+}
+
+# Univers « Luxe » : requêtes réelles utilisées pour remplir le catalogue quand
+# l'utilisateur clique sur Luxe sans texte. Le mot « luxury » n'est jamais envoyé
+# aux connecteurs : seules ces marques (et les offres déjà indexées) alimentent
+# le résultat.
+_LUXURY_UNIVERSE_QUERIES = (
+    "Stone Island", "Moncler", "Gucci", "Balenciaga", "Prada",
+    "Dior", "Off-White", "Ralph Lauren",
+)
+
+def _rotating_luxury_query() -> str:
+    import time as _time
+    return _LUXURY_UNIVERSE_QUERIES[int(_time.strftime("%j")) % len(_LUXURY_UNIVERSE_QUERIES)]
+
+def _progressive_source_order(query, active_marketplaces):
+    """Met les marchands les plus plausibles en tête sans masquer les autres.
+
+    Tous les connecteurs restent accessibles : on évite seulement qu'une requête
+    Stone Island occupe les premiers workers avec cinq boutiques running, ou
+    qu'une recherche On Cloud attende les généralistes avant i-Run/21RUN.
+    """
+    try:
+        info = understand_query(query)
+        brand = getattr(info, "brand", None)
+        product_type = getattr(info, "product_type", None)
+    except Exception:
+        brand = None
+        product_type = None
+    running_priority = [
+        "eBay", "i-Run", "Direct Running", "21RUN", "Running Point",
+        "MisterRunning", "Alltricks", "Deporvillage", "Vinted", "Zalando",
+        "ASOS", "Hardloop", "Ekosport", "Courir", "Footshop", "JD Sports",
+        "SSENSE", "Spartoo", "Cdiscount", "Grailed", "67behaviour",
+        "AliExpress", "DHgate", "1688",
+    ]
+    fashion_priority = [
+        "eBay", "Vinted", "SSENSE", "ASOS", "Zalando", "Grailed",
+        "Courir", "Spartoo", "Footshop", "JD Sports", "Cdiscount",
+        "67behaviour", "AliExpress", "DHgate", "i-Run", "Direct Running",
+        "Alltricks", "Deporvillage", "21RUN", "Running Point",
+        "MisterRunning", "Hardloop", "Ekosport", "1688",
+    ]
+    generic_priority = [
+        "eBay", "Vinted", "ASOS", "Zalando", "SSENSE", "Courir",
+        "Spartoo", "Footshop", "JD Sports", "Grailed", "i-Run",
+        "Direct Running", "Alltricks", "Deporvillage", "21RUN",
+        "Running Point", "MisterRunning", "Hardloop", "Ekosport",
+        "Cdiscount", "67behaviour", "AliExpress", "DHgate", "1688",
+    ]
+    if brand in _RUNNING_BRANDS or product_type == "chaussures":
+        preferred = running_priority
+    elif brand in _LUXURY_FASHION_BRANDS:
+        preferred = fashion_priority
+    else:
+        preferred = generic_priority
+    active = list(active_marketplaces or [])
+    order = [name for name in preferred if name in active]
+    order.extend(name for name in active if name not in order)
+    return order
 
 SUBSCRIPTION_PLANS = {
     "free": {
         "name": "Gratuit", "monthly": 0, "yearly": 0,
-        "tagline": "Pour découvrir les bonnes affaires.",
+        "tagline": "Comparer les prix sans payer.",
     },
+    # Les identifiants internes restent stables pour ne pas casser la couche
+    # de billing existante. Dans l'interface, `pro` = Premium et
+    # `reseller` = Pro / revendeur.
     "pro": {
-        "name": "Pro", "monthly": 3.99, "yearly": 39.90,
-        "tagline": "Pour chercher plus vite et décider mieux.",
+        "name": "Premium", "monthly": 4.99, "yearly": 49.90,
+        "tagline": "Veille, alertes et Radar automatique.",
     },
     "reseller": {
-        "name": "Reseller", "monthly": 8.99, "yearly": 89.90,
-        "tagline": "Pour piloter une activité de revente.",
+        "name": "Pro", "monthly": 12.99, "yearly": 129.90,
+        "tagline": "Outils avancés pour acheter et revendre.",
     },
 }
 
@@ -506,6 +649,16 @@ def account_capabilities():
     })
 
 
+@app.get("/api/index/status")
+def index_status():
+    state = index_engine.stats()
+    # Never expose the server filesystem path publicly.
+    state.pop("db_path", None)
+    state["mode"] = "hybrid-index-first"
+    state["persistent_hint"] = bool(os.environ.get("LUXE_RADAR_INDEX_DB"))
+    return jsonify(state)
+
+
 @app.get("/sw.js")
 def service_worker():
     response = app.send_static_file("sw.js")
@@ -529,7 +682,7 @@ _image_feature_lock = Lock()
 # de parallélisme. Les tâches sont bornées par les timeouts des connecteurs.
 _PROGRESSIVE_WORKERS = _bounded_env_int(
     "LUXE_RADAR_PROGRESSIVE_WORKERS",
-    2 if IS_RENDER_RUNTIME else 5,
+    3 if IS_RENDER_RUNTIME else 5,
     1,
     5,
 )
@@ -537,12 +690,29 @@ _progressive_executor = ThreadPoolExecutor(
     max_workers=_PROGRESSIVE_WORKERS,
     thread_name_prefix="luxe-progressive",
 )
+# V3.6 : écritures SQLite hors du chemin critique de la recherche.
+_index_executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="luxe-index")
+
+
+def _index_results_async(results, query):
+    if not results or not query or not index_engine.index_enabled():
+        return
+    snapshot = [dict(item) for item in results if isinstance(item, dict)]
+    if not snapshot:
+        return
+    def _write():
+        try:
+            index_engine.upsert_results(snapshot, query)
+        except Exception as exc:
+            app.logger.warning("Index V3.6 indisponible: %s", str(exc)[:180])
+    _index_executor.submit(_write)
+
 # Un seul navigateur Playwright lourd à la fois sur le même process. Les deux
 # workers progressifs peuvent continuer à faire du HTTP en parallèle.
 _browser_progressive_semaphore = Semaphore(1)
 
 print(
-    f"[LUXE RADAR] V{APP_VERSION} | progressive=eBay-first | "
+    f"[LUXE RADAR] V{APP_VERSION} | instant=global-index/background-live | "
     f"workers={_PROGRESSIVE_WORKERS} | render={IS_RENDER_RUNTIME}"
 )
 
@@ -612,7 +782,8 @@ def _marketplace_counts(results):
 
 def _cache_results(
     results, owner=None, pending_sources=None, completed_sources=None,
-    search_query=None, search_price=None,
+    search_query=None, search_price=None, index_mode=False,
+    index_hit_count=0, index_total=0, index_age_seconds=None,
 ):
     token = uuid4().hex
     pending_sources = list(dict.fromkeys(str(source) for source in (pending_sources or []) if str(source)))
@@ -639,6 +810,7 @@ def _cache_results(
 
         _search_cache[token] = {
             "created_at": monotonic(),
+            "started_at": time.time(),
             "owner": owner_key,
             "results": [dict(item, _rank_index=index) for index, item in enumerate(results or [])],
             "pending": bool(pending_sources),
@@ -650,8 +822,18 @@ def _cache_results(
             "cancelled": False,
             "search_query": str(search_query or "").strip(),
             "search_price": _safe_number(search_price, None),
-            "page_state": {"eBay": 1, "Zalando": 1, "Vinted": 1},
-            "page_empty": {"eBay": 0, "Zalando": 0, "Vinted": 0},
+            "index_mode": bool(index_mode),
+            "index_hit_count": int(index_hit_count or 0),
+            "index_total": int(index_total or 0),
+            "index_age_seconds": _safe_number(index_age_seconds, None),
+            # Infinite-scroll V3.7 MAX RECALL: every source that can expose a
+            # real page gets its own cursor. Non-page connectors use a bounded
+            # recall widening pass (initial cap -> 100) instead of fabricating
+            # pages that do not exist.
+            "page_state": {source: 1 for source in EXPAND_PAGE_SOURCES},
+            "page_empty": {source: 0 for source in EXPAND_PAGE_SOURCES},
+            "recall_limit": dict(EXPAND_RECALL_INITIAL_LIMITS),
+            "recall_empty": {source: 0 for source in EXPAND_RECALL_SOURCES},
             "page_exhausted": [],
             "discovery_cursor": 0,
             "discovery_has_more": True,
@@ -659,6 +841,11 @@ def _cache_results(
             "expansion_inflight": False,
             "expansion_exhausted": False,
             "catalog_scanned": 0,
+            # V3.7.x : observabilité [SOURCE][PAGE] et [SEARCH SUMMARY].
+            "source_pages": {},
+            "live_added": 0,
+            "duplicates_total": 0,
+            "received_total": 0,
         }
         _clean_cache()
     return token
@@ -763,6 +950,17 @@ def _complete_progressive_source(token, source, additions, reference, strict, ow
         results = _rank_by_reference(results, reference, strict)
         entry["results"] = [dict(item, _rank_index=index) for index, item in enumerate(results)]
 
+        # Observabilité : reçus / nouveaux / doublons pour la ligne [SOURCE][PAGE].
+        received = len(additions or [])
+        new_count = max(0, len(results) - len(existing))
+        duplicates = max(0, received - new_count)
+        entry["received_total"] = int(entry.get("received_total", 0)) + received
+        entry["duplicates_total"] = int(entry.get("duplicates_total", 0)) + duplicates
+        entry["live_added"] = int(entry.get("live_added", 0)) + new_count
+        source_pages = dict(entry.get("source_pages") or {})
+        source_pages[source] = int(source_pages.get(source, 0)) + 1
+        entry["source_pages"] = source_pages
+
         pending = [name for name in entry.get("pending_sources") or [] if name != source]
         completed = list(entry.get("completed_sources") or [])
         if source not in completed:
@@ -779,6 +977,7 @@ def _complete_progressive_source(token, source, additions, reference, strict, ow
 
 
 def _fail_progressive_source(token, source, owner):
+    ended = False
     with _cache_lock:
         entry = _search_cache.get(token)
         if entry is None or entry.get("cancelled"):
@@ -792,6 +991,66 @@ def _fail_progressive_source(token, source, owner):
             failed.append(source)
         entry["failed_sources"] = failed
         entry["pending"] = bool(entry["pending_sources"])
+        ended = not entry["pending"]
+    if ended:
+        _log_search_summary(token, source, 0.0)
+
+
+def _log_search_summary(token, source, source_elapsed):
+    """Ligne [SEARCH SUMMARY] enrichie : bilan complet de la recherche."""
+    try:
+        with _cache_lock:
+            _clean_cache()
+            entry = _search_cache.get(token)
+            if entry is None or entry.get("cancelled"):
+                return
+            entry["ended_at"] = time.time()
+            total_elapsed = max(0.0, entry["ended_at"] - float(entry.get("started_at") or entry["ended_at"]))
+            snapshot = {
+                "results": [dict(item) for item in entry.get("results") or []],
+                "source_counts": dict(entry.get("source_counts") or {}),
+                "completed_sources": list(entry.get("completed_sources") or []),
+                "failed_sources": list(entry.get("failed_sources") or []),
+                "search_query": str(entry.get("search_query") or ""),
+                "index_initial": int(entry.get("index_hit_count") or 0),
+                "live_added": int(entry.get("live_added") or 0),
+                "received_total": int(entry.get("received_total") or 0),
+                "duplicates_total": int(entry.get("duplicates_total") or 0),
+                "started_at": float(entry.get("started_at") or 0.0),
+            }
+        results = snapshot["results"]
+        identity_counts = {"fort": 0, "possible": 0, "rejet": 0}
+        for item in results:
+            level = str(item.get("niveau_identite") or "possible")
+            if level in identity_counts:
+                identity_counts[level] += 1
+        sources = list(dict.fromkeys(list(snapshot["completed_sources"]) + [source]))
+        failed = list(snapshot["failed_sources"])
+        detail = ", ".join(f"{name} {count}" for name, count in snapshot["source_counts"].items()) or "aucune offre"
+        identite = f"identité: {identity_counts['fort']} fort / {identity_counts['possible']} possible / {identity_counts['rejet']} rejet"
+        intent_line = ""
+        try:
+            intent = _parse_intent(snapshot["search_query"])
+            if intent is not None:
+                intent_parts = {
+                    key: value for key, value in intent.to_dict().items()
+                    if key != "canonical" and value
+                }
+                if intent_parts:
+                    intent_line = " | intent=" + str(intent_parts)
+        except Exception:
+            intent_line = ""
+        print(
+            f"[SEARCH SUMMARY] query={snapshot['search_query']!r}"
+            f"{intent_line} | {len(results)} résultats | {detail} | "
+            f"{len(sources)} source(s) + {len(failed)} échec(s) | "
+            f"index_initial={snapshot['index_initial']} live_added={snapshot['live_added']} "
+            f"final_total={len(results)} received={snapshot['received_total']} "
+            f"duplicates={snapshot['duplicates_total']} rejected=0 | "
+            f"{total_elapsed:.1f}s | {identite}"
+        )
+    except Exception:
+        app.logger.exception("Échec de la ligne [SEARCH SUMMARY]")
 
 
 def _finish_progressive_source(token, query, price, source, reference, strict, owner):
@@ -810,7 +1069,7 @@ def _finish_progressive_source(token, query, price, source, reference, strict, o
             # Le scroll infini demandera les pages suivantes au besoin.
             source_caps = {
                 "Zalando": 30,
-                "SSENSE": 50,
+                "SSENSE": 120,
                 "ASOS": 60,
                 "AliExpress": 60,
                 "DHgate": 50,
@@ -840,17 +1099,27 @@ def _finish_progressive_source(token, query, price, source, reference, strict, o
             additions = _search_source()
         if not _progressive_task_allowed(token, source, owner):
             return
+        _index_results_async(additions, query)
         state = _complete_progressive_source(
             token, source, additions, reference, strict, owner
         )
         if state is None:
             return
         before, total, still_pending = state
+        elapsed = perf_counter() - started
+        with _cache_lock:
+            cached = _search_cache.get(token)
+            page = int((cached.get("source_pages") or {}).get(source, 1)) if cached else 1
+        received = len(additions or [])
+        new_count = max(0, total - before)
+        duplicates = max(0, received - new_count)
         print(
-            f"[PROGRESSIF] {source} terminé: +{max(0, total-before)} -> "
-            f"{total} résultats en {perf_counter()-started:.2f}s"
-            + (" | autres sources en cours" if still_pending else " | catalogue final")
+            f"[PROGRESSIF][{source}][PAGE {page}] received={received} relevant={received} "
+            f"new={new_count} duplicates={duplicates} rejected=0 "
+            f"duration={elapsed:.2f}s total={total}"
         )
+        if not still_pending:
+            _log_search_summary(token, source, elapsed)
     except Exception:
         app.logger.exception("Échec de la source progressive %s", source)
         _fail_progressive_source(token, source, owner)
@@ -921,8 +1190,17 @@ def _sorted_results(results, sort="relevance", marketplace="Toutes", price_min=N
         filtered = [item for item in filtered if str(item.get("niveau_identite") or "") == "fort"]
     elif identity == "unverified":
         filtered = [item for item in filtered if str(item.get("niveau_identite") or "") == "rejet"]
+    identity_order = {"fort": 0, "possible": 1, "rejet": 2}
     keys = {
-        "relevance": lambda item: item.get("_rank_index", 0),
+        # V3.2.0 : même en mode Explorer, une annonce douteuse ne doit jamais
+        # passer devant une correspondance exacte simplement parce que sa source
+        # a répondu plus vite.
+        "relevance": lambda item: (
+            identity_order.get(str(item.get("niveau_identite") or "possible"), 1),
+            -_safe_number(item.get("score_identite"), 0),
+            -_safe_number(item.get("score"), 0),
+            item.get("_rank_index", 0),
+        ),
         "price_asc": lambda item: (_safe_number(item.get("prix"), float("inf")), item.get("_rank_index", 0)),
         "price_desc": lambda item: (-_safe_number(item.get("prix"), -1), item.get("_rank_index", 0)),
         "score": lambda item: (-_safe_number(item.get("score")), item.get("_rank_index", 0)),
@@ -1009,11 +1287,15 @@ def _result_page(token, offset, limit=RESULT_BATCH_SIZE, sort="relevance", marke
         results = _sorted_results(entry["results"], sort=sort, marketplace=marketplace, price_min=price_min, price_max=price_max, price_exact=price_exact, price_tolerance=price_tolerance, exclude=exclude, risk=risk, identity=identity)
         page = [_public_result(item) for item in results[offset:offset + limit]]
         next_offset = offset + len(page)
+        per_page = max(1, int(limit))
         return {
             "results": page,
             "next_offset": next_offset,
             "has_more": next_offset < len(results),
             "total": len(results),
+            "page": (offset // per_page) + 1,
+            "total_pages": max(1, (len(results) + per_page - 1) // per_page),
+            "per_page": per_page,
         }
 
 
@@ -1054,11 +1336,88 @@ def result_status(token):
             "expansion_inflight": bool(entry.get("expansion_inflight")),
             "expansion_exhausted": bool(entry.get("expansion_exhausted")),
             "catalog_scanned": int(entry.get("catalog_scanned", 0)),
+            "index_mode": bool(entry.get("index_mode")),
+            "index_hit_count": int(entry.get("index_hit_count", 0)),
+            "index_total": int(entry.get("index_total", 0)),
+            "index_age_seconds": entry.get("index_age_seconds"),
         })
 
 
-EXPAND_PAGE_SOURCES = ("eBay", "Zalando", "Vinted")
-EXPAND_WAVE_ORDER = ("eBay", "Zalando", "Vinted", "__catalog__")
+_sources_health_cache = {"at": 0.0, "profile": None}
+
+
+@app.get("/api/sources/health")
+def sources_health():
+    """Profil de capacités et état de santé des connecteurs actifs.
+
+    Consommé par le panneau « Marchands trouvés » pour afficher la capacité
+    réelle de chaque source (pagination, plafonds, pause) sans mensonge.
+    """
+    now = time.time()
+    if _sources_health_cache["profile"] is not None and now - _sources_health_cache["at"] < 120:
+        return jsonify({"sources": _sources_health_cache["profile"]})
+    _, active_marketplaces = _app_metadata()
+    profile = {}
+    for name in sorted(active_marketplaces):
+        try:
+            connector = get_connector(name)
+        except Exception:
+            connector = None
+        if connector is None:
+            continue
+        health = {}
+        try:
+            health = connector.health()
+        except Exception:
+            health = {"ok": False}
+        profile[name] = {
+            "supports_pagination": bool(getattr(connector, "supports_pagination", False)),
+            "expansion_page_size": int(getattr(connector, "expansion_page_size", 50)),
+            "expansion_recall_cap": int(getattr(connector, "expansion_recall_cap", 100)),
+            "max_pages": int(getattr(connector, "max_pages", 0)),
+            "empty_pages_threshold": int(getattr(connector, "empty_pages_threshold", 2)),
+            "cooldown_seconds": float(getattr(connector, "cooldown_seconds", 0)),
+            "health": health,
+        }
+    _sources_health_cache.update({"at": time.time(), "profile": profile})
+    return jsonify({"sources": profile})
+
+
+# Sources with a real page argument. retail_public connectors all implement
+# search_page and remain fail-fast on 400/403/429/challenges.
+EXPAND_PAGE_SOURCES = (
+    "eBay", "Zalando", "Vinted",
+    "i-Run", "Direct Running", "Alltricks", "Deporvillage",
+    "Running Point", "Hardloop", "Ekosport", "Courir", "21RUN",
+    "MisterRunning", "Spartoo", "Footshop", "JD Sports",
+)
+
+# These connectors do not expose a trustworthy page cursor today. We still
+# widen their first public pass up to 100 real candidates when the user reaches
+# the end of the catalogue. This is especially useful for SSENSE/ASOS and keeps
+# Grailed honest: if its public feed is challenged, it returns 0 and exhausts.
+EXPAND_RECALL_INITIAL_LIMITS = {
+    "SSENSE": 120,
+    "ASOS": 60,
+    "AliExpress": 60,
+    "DHgate": 50,
+    "Cdiscount": 40,
+    "67behaviour": 30,
+    "1688": 30,
+    "Grailed": 36,
+}
+EXPAND_RECALL_SOURCES = tuple(EXPAND_RECALL_INITIAL_LIMITS)
+EXPAND_ALL_SOURCES = EXPAND_PAGE_SOURCES + EXPAND_RECALL_SOURCES
+
+# Rotate through every existing marketplace before moving on. __catalog__ then
+# discovers additional non-blocked public shops from sites.json in small waves.
+EXPAND_WAVE_ORDER = (
+    "eBay", "Vinted", "SSENSE", "ASOS", "Zalando", "Grailed",
+    "Courir", "i-Run", "Direct Running", "21RUN", "Running Point",
+    "MisterRunning", "Hardloop", "Spartoo", "Footshop", "JD Sports",
+    "Alltricks", "Deporvillage", "Ekosport", "AliExpress", "DHgate",
+    "Cdiscount", "67behaviour", "1688", "__catalog__",
+)
 
 
 def _analyse_discovery_items(items, query, price):
@@ -1078,7 +1437,8 @@ def _analyse_discovery_items(items, query, price):
 def _expand_search_once(token, owner, marketplace="Toutes"):
     """Ajoute une nouvelle vague réelle au catalogue d'une recherche.
 
-    - eBay / Zalando / Vinted : page suivante de la source ;
+    - toutes les sources avec pagination publique : page suivante ;
+    - sources sans pagination fiable : élargissement borné du rappel ;
     - catalogue massif : quelques sites publics non bloqués sont sondés en
       parallèle. Les 1000+ domaines ne sont jamais frappés simultanément.
     """
@@ -1107,7 +1467,7 @@ def _expand_search_once(token, owner, marketplace="Toutes"):
         requested = str(marketplace or "Toutes")
         target = None
         if requested != "Toutes":
-            if requested in EXPAND_PAGE_SOURCES and requested not in exhausted:
+            if requested in EXPAND_ALL_SOURCES and requested not in exhausted:
                 target = requested
             else:
                 return {"accepted": False, "busy": False, "added": 0, "exhausted": True, "source": requested}, 200
@@ -1147,6 +1507,8 @@ def _expand_search_once(token, owner, marketplace="Toutes"):
         existing_count = len(entry.get("results") or [])
         page_state = dict(entry.get("page_state") or {})
         page_empty = dict(entry.get("page_empty") or {})
+        recall_limit = dict(entry.get("recall_limit") or EXPAND_RECALL_INITIAL_LIMITS)
+        recall_empty = dict(entry.get("recall_empty") or {})
         discovery_cursor = int(entry.get("discovery_cursor", 0))
 
     additions = []
@@ -1154,6 +1516,7 @@ def _expand_search_once(token, owner, marketplace="Toutes"):
     next_discovery_cursor = discovery_cursor
     next_discovery_has_more = discovery_has_more
     next_page = None
+    next_recall_limit = None
     error = None
     try:
         if target == "__catalog__":
@@ -1161,23 +1524,42 @@ def _expand_search_once(token, owner, marketplace="Toutes"):
                 query=query,
                 price_max=price,
                 cursor=discovery_cursor,
-                site_limit=6 if IS_RENDER_RUNTIME else 10,
-                per_site_limit=8,
+                site_limit=8 if IS_RENDER_RUNTIME else 14,
+                per_site_limit=16 if IS_RENDER_RUNTIME else 24,
             )
             additions = _analyse_discovery_items(raw_items, query, price)
-        else:
-            next_page = int(page_state.get(target, 1)) + 1
-            page_limits = {"eBay": 50, "Zalando": 30, "Vinted": 30}
+        elif target in EXPAND_RECALL_SOURCES:
+            current_limit = int(recall_limit.get(target, EXPAND_RECALL_INITIAL_LIMITS.get(target, 30)))
+            next_recall_limit = min(100, max(current_limit + 25, current_limit * 2))
             additions = rechercher_multi_marketplaces(
                 marque=query,
                 prix_max=price,
                 plateformes=[target],
-                limite=min(page_limits.get(target, 50), SEARCH_RESULT_LIMIT),
+                limite=min(next_recall_limit, SEARCH_RESULT_LIMIT),
+                page=1,
+            )
+        else:
+            next_page = int(page_state.get(target, 1)) + 1
+            page_limits = {
+                "eBay": 100, "Zalando": 60, "Vinted": 80,
+                "i-Run": 100, "Direct Running": 100, "Alltricks": 100,
+                "Deporvillage": 100, "Running Point": 100, "Hardloop": 100,
+                "Ekosport": 100, "Courir": 100, "21RUN": 100,
+                "MisterRunning": 100, "Spartoo": 100, "Footshop": 100,
+                "JD Sports": 100,
+            }
+            additions = rechercher_multi_marketplaces(
+                marque=query,
+                prix_max=price,
+                plateformes=[target],
+                limite=min(page_limits.get(target, 100), SEARCH_RESULT_LIMIT),
                 page=next_page,
             )
     except Exception as exc:
         error = str(exc)[:240]
         additions = []
+
+    _index_results_async(additions, query)
 
     with _cache_lock:
         _clean_cache()
@@ -1201,6 +1583,22 @@ def _expand_search_once(token, owner, marketplace="Toutes"):
             entry["discovery_cursor"] = next_discovery_cursor
             entry["discovery_has_more"] = bool(next_discovery_has_more)
             entry["catalog_scanned"] = int(entry.get("catalog_scanned", 0)) + int(scanned or 0)
+        elif target in EXPAND_RECALL_SOURCES:
+            limits = dict(entry.get("recall_limit") or EXPAND_RECALL_INITIAL_LIMITS)
+            empty = dict(entry.get("recall_empty") or {})
+            limits[target] = int(next_recall_limit or limits.get(target, 100))
+            if added == 0:
+                empty[target] = int(empty.get(target, 0)) + 1
+            else:
+                empty[target] = 0
+            # The underlying multi-search deliberately caps a single source at
+            # 100 candidates. One empty widening pass or reaching that cap means
+            # there is no honest deeper cursor to request for this connector.
+            if empty[target] >= 1 or limits[target] >= 100:
+                exhausted.add(target)
+            entry["recall_limit"] = limits
+            entry["recall_empty"] = empty
+            entry["page_exhausted"] = sorted(exhausted)
         else:
             state = dict(entry.get("page_state") or {})
             empty = dict(entry.get("page_empty") or {})
@@ -1209,12 +1607,16 @@ def _expand_search_once(token, owner, marketplace="Toutes"):
                 empty[target] = int(empty.get(target, 0)) + 1
             else:
                 empty[target] = 0
-            # Zalando : une page d'expansion vide suffit. En production Render,
-            # on limite aussi Zalando à la page 2 : les pages profondes sont
-            # nettement plus susceptibles de timeout/403 et bloquaient le scroll
-            # pendant ~30-40 s. Les autres sources gardent le seuil historique.
-            empty_threshold = 1 if target == "Zalando" else 2
+            # A blocked/ignored retail page will return no additions and exhaust
+            # quickly. We never attempt to work around 403/429/challenges.
+            # La condition d'arrêt vient des capacités du connecteur (3 pages
+            # consécutives vides par défaut pour les sources paginées V4).
+            connector = get_connector(target)
+            empty_threshold = int(getattr(connector, "empty_pages_threshold", 2) or 2) if connector is not None else 2
+            max_pages = int(getattr(connector, "max_pages", 0) or 0) if connector is not None else 0
             if empty[target] >= empty_threshold:
+                exhausted.add(target)
+            if max_pages > 0 and int(next_page or 1) >= max_pages:
                 exhausted.add(target)
             if target == "Zalando" and IS_RENDER_RUNTIME and int(next_page or 1) >= 2:
                 exhausted.add(target)
@@ -1224,7 +1626,7 @@ def _expand_search_once(token, owner, marketplace="Toutes"):
 
         entry["expansion_inflight"] = False
         entry["expansion_exhausted"] = (
-            all(source in exhausted for source in EXPAND_PAGE_SOURCES)
+            all(source in exhausted for source in EXPAND_ALL_SOURCES)
             and not bool(entry.get("discovery_has_more", True))
         )
         return {
@@ -1232,6 +1634,7 @@ def _expand_search_once(token, owner, marketplace="Toutes"):
             "busy": False,
             "source": "catalogue" if target == "__catalog__" else target,
             "page": next_page,
+            "recall_limit": next_recall_limit,
             "added": added,
             "total": len(merged),
             "catalog_scanned": int(entry.get("catalog_scanned", 0)),
@@ -1332,7 +1735,7 @@ def more_results(token):
         risk = "all"
     identity = request.args.get("identity", "confirmed")
     if identity not in {"all", "confirmed", "strong", "unverified"}:
-        identity = "confirmed"
+        identity = "all"
     page = _result_page(token, offset, limit=parsed_limit, sort=sort, marketplace=marketplace, price_min=price_min, price_max=price_max, price_exact=price_exact, price_tolerance=price_tolerance, exclude=exclude, risk=risk, identity=identity, owner=session.get("csrf_token"))
     if page is None:
         return jsonify({"error": "Recherche expirée. Relance le radar."}), 404
@@ -1369,176 +1772,294 @@ def rank_results_by_image(token):
     return jsonify({"results": page["results"], "next_offset": page["next_offset"], "has_more": page["has_more"], "total": page["total"], "compared": compared})
 
 
+def _search_signature(recherche, prix_saisi, selected_platform, reference_saisie, reference_stricte):
+    """Empreinte stable des entrées de recherche pour réutiliser le token de
+    session (évite de re-frapper les marketplaces quand on change de page)."""
+    payload = "|".join([
+        str(recherche or "").strip(),
+        str(prix_saisi or "").strip(),
+        str(selected_platform or "Toutes"),
+        str(reference_saisie or "").strip(),
+        "1" if reference_stricte else "0",
+    ])
+    return hashlib.sha256(payload.encode("utf-8")).hexdigest()
+
+
+def _run_radar_search(recherche, prix_saisi, selected_platform, reference_saisie, reference_stricte, initial_lots, active_marketplaces, universe=""):
+    """Exécute une recherche radar réelle (index instantané + workers progressifs).
+
+    Réutilisé par le POST / (formulaire) et le GET /search (URL paginée).
+    Renvoie un dict avec tout l'état nécessaire au rendu serveur.
+    """
+    recherche = str(recherche or "").strip()[:120]
+    prix_saisi = str(prix_saisi or "").strip()[:30]
+    selected_platform = str(selected_platform or "Toutes").strip()[:80]
+    reference_saisie = str(reference_saisie or "").strip()[:60]
+    reference_stricte = bool(reference_stricte)
+    universe = str(universe or "").strip().lower()[:30]
+    if universe not in {"luxury"}:
+        universe = ""
+    universe_active = bool(universe)
+
+    try:
+        if initial_lots:
+            initial_lots = max(1, min(int(initial_lots), MAX_BATCH_SIZE))
+        else:
+            initial_lots = 0
+    except (TypeError, ValueError):
+        initial_lots = 0
+    if not initial_lots:
+        initial_lots = MOBILE_INITIAL_RESULTS if _is_mobile_request() else INITIAL_RESULTS
+
+    state = {
+        "recherche": recherche,
+        "prix_saisi": prix_saisi,
+        "selected_platform": selected_platform,
+        "reference_saisie": reference_saisie,
+        "reference_stricte": reference_stricte,
+        "initial_lots": initial_lots,
+        "universe_active": universe_active,
+        "erreur": None,
+        "search_token": None,
+        "total_results": 0,
+        "search_pending": False,
+        "search_generation": 0,
+        "interpreted_query": None,
+        "index_mode": False,
+        "index_hit_count": 0,
+        "index_age_seconds": None,
+        "annonces": [],
+    }
+
+    understood = understand_query(recherche) if recherche else None
+    state["interpreted_query"] = understood.canonical if understood and understood.corrected else None
+
+    allowed_platforms = {"Toutes", *active_marketplaces}
+    if state["selected_platform"] not in allowed_platforms:
+        state["erreur"] = _message("invalid_marketplace")
+        state["selected_platform"] = "Toutes"
+
+    normalized_reference = _normalized_reference(reference_saisie)
+    state["reference_stricte"] = reference_stricte and bool(normalized_reference)
+    if reference_saisie and len(normalized_reference) < 3:
+        state["erreur"] = _message("invalid_reference")
+
+    def _submit_progressive(search_token, connector_query, prix):
+        owner = session.get("csrf_token")
+        state["search_pending"] = bool(progressive_sources)
+        print(
+            f"[{'UNIVERSE' if universe_active else 'INDEX' if state['index_mode'] else 'COLD'}] "
+            f"rendu immédiat: {state['index_hit_count']}/{indexed.total} offres | "
+            f"rafraîchissement: {', '.join(progressive_sources)}"
+        )
+        for source in progressive_sources:
+            _progressive_executor.submit(
+                _finish_progressive_source,
+                search_token, connector_query, prix, source,
+                "" if universe_active else reference_saisie,
+                False if universe_active else state["reference_stricte"],
+                owner,
+            )
+
+    def _finalize_first_page():
+        first_page = (
+            _result_page(state["search_token"], 0, state["initial_lots"], identity="confirmed", owner=session.get("csrf_token"))
+            if state["search_token"] else None
+        )
+        total_n = first_page["total"] if first_page else 0
+        state["annonces"] = first_page["results"] if first_page else []
+        state["total_results"] = total_n
+        state["page"] = 1
+        state["total_pages"] = max(1, (total_n + SEARCH_PAGE_SIZE - 1) // SEARCH_PAGE_SIZE)
+
+    if recherche:
+        try:
+            prix = float(prix_saisi) if prix_saisi else 1_000_000.0
+            if not (0 < prix <= 1_000_000):
+                state["erreur"] = _message("price_range")
+            elif state["erreur"] is None:
+                plateformes = None if state["selected_platform"] == "Toutes" else [state["selected_platform"]]
+                base_connector_query = _canonicalize_search_query(recherche)
+                connector_query = (
+                    base_connector_query
+                    if not normalized_reference or normalized_reference in _normalized_reference(base_connector_query)
+                    else f"{base_connector_query} {reference_saisie}"
+                )
+                if universe_active:
+                    indexed = index_engine.search_universe(
+                        _LUXURY_FASHION_BRANDS, connector_query,
+                        price_max=(prix if prix_saisi else None),
+                        marketplace=state["selected_platform"],
+                        identity="confirmed",
+                        limit=min(index_engine.query_limit(), SEARCH_RESULT_LIMIT),
+                    ) if index_engine.index_enabled() else index_engine.IndexSearch([], 0, None, "")
+                else:
+                    indexed = index_engine.search(
+                        connector_query,
+                        price_max=(prix if prix_saisi else None),
+                        marketplace=state["selected_platform"],
+                        identity="all",
+                        limit=min(index_engine.query_limit(), SEARCH_RESULT_LIMIT),
+                    ) if index_engine.index_enabled() else index_engine.IndexSearch([], 0, None, "")
+                indexed_results = _rank_by_reference(indexed.results, reference_saisie, state["reference_stricte"])
+                indexed_confirmed = _sorted_results(indexed_results, identity="confirmed")
+                state["index_hit_count"] = len(indexed_confirmed)
+                state["index_age_seconds"] = indexed.age_seconds
+                state["index_mode"] = state["index_hit_count"] > 0
+
+                if plateformes is None:
+                    progressive_sources = _progressive_source_order(connector_query, active_marketplaces)
+                else:
+                    progressive_sources = [name for name in plateformes if name in active_marketplaces]
+
+                state["search_token"] = _cache_results(
+                    indexed_results, session.get("csrf_token"),
+                    pending_sources=progressive_sources,
+                    completed_sources=[],
+                    search_query=connector_query, search_price=prix,
+                    index_mode=state["index_mode"], index_hit_count=state["index_hit_count"],
+                    index_total=indexed.total, index_age_seconds=state["index_age_seconds"],
+                )
+                _submit_progressive(state["search_token"], connector_query, prix)
+                _finalize_first_page()
+        except ValueError:
+            state["erreur"] = _message("invalid_price")
+        except Exception:
+            app.logger.exception("Échec contrôlé d'une recherche radar")
+            state["erreur"] = _message("search_error")
+    elif universe == "luxury":
+        try:
+            prix = float(prix_saisi) if prix_saisi else 1_000_000.0
+            if not (0 < prix <= 1_000_000):
+                state["erreur"] = _message("price_range")
+            elif state["erreur"] is None:
+                plateformes = None if state["selected_platform"] == "Toutes" else [state["selected_platform"]]
+                connector_query = _rotating_luxury_query()
+                indexed = index_engine.search_universe(
+                    _LUXURY_FASHION_BRANDS, connector_query,
+                    price_max=(prix if prix_saisi else None),
+                    marketplace=state["selected_platform"],
+                    identity="confirmed",
+                    limit=min(index_engine.query_limit(), SEARCH_RESULT_LIMIT),
+                ) if index_engine.index_enabled() else index_engine.IndexSearch([], 0, None, "")
+                indexed_results = list(indexed.results)
+                indexed_confirmed = _sorted_results(indexed_results, identity="confirmed")
+                state["index_hit_count"] = len(indexed_confirmed)
+                state["index_age_seconds"] = indexed.age_seconds
+                state["index_mode"] = state["index_hit_count"] > 0
+
+                if plateformes is None:
+                    progressive_sources = _progressive_source_order(connector_query, active_marketplaces)
+                else:
+                    progressive_sources = [name for name in plateformes if name in active_marketplaces]
+
+                state["search_token"] = _cache_results(
+                    indexed_results, session.get("csrf_token"),
+                    pending_sources=progressive_sources,
+                    completed_sources=[],
+                    search_query=connector_query, search_price=prix,
+                    index_mode=state["index_mode"], index_hit_count=state["index_hit_count"],
+                    index_total=indexed.total, index_age_seconds=state["index_age_seconds"],
+                )
+                _submit_progressive(state["search_token"], connector_query, prix)
+                _finalize_first_page()
+        except ValueError:
+            state["erreur"] = _message("invalid_price")
+        except Exception:
+            app.logger.exception("Échec contrôlé du clic univers Luxe")
+            state["erreur"] = _message("search_error")
+    else:
+        state["erreur"] = _message("missing_fields")
+    return state
+
+
 @app.route("/", methods=["GET", "POST"])
 def accueil():
     catalog_sites, active_marketplaces = _app_metadata()
-    annonces = []
-    recherche = None
-    erreur = None
-    search_token = None
-    total_results = 0
-    selected_platform = "Toutes"
-    prix_saisi = ""
-    prefill_query = ""
-    reference_saisie = ""
-    reference_stricte = False
-    initial_lots = MOBILE_INITIAL_RESULTS if _is_mobile_request() else INITIAL_RESULTS
-    search_pending = False
-    search_generation = 0
-    interpreted_query = None
+    state = {
+        "annonces": [],
+        "recherche": None,
+        "erreur": None,
+        "search_token": None,
+        "total_results": 0,
+        "selected_platform": "Toutes",
+        "prix_saisi": "",
+        "prefill_query": "",
+        "reference_saisie": "",
+        "reference_stricte": False,
+        "initial_lots": MOBILE_INITIAL_RESULTS if _is_mobile_request() else INITIAL_RESULTS,
+        "search_pending": False,
+        "search_generation": 0,
+        "interpreted_query": None,
+        "index_mode": False,
+        "index_hit_count": 0,
+        "index_age_seconds": None,
+        "universe_active": False,
+        "page": 1,
+        "total_pages": 1,
+    }
 
     if request.method == "GET":
-        prefill_query = request.args.get("q", "").strip()[:120]
-        prix_saisi = request.args.get("price", "").strip()[:30]
+        state["prefill_query"] = request.args.get("q", "").strip()[:120]
+        state["prix_saisi"] = request.args.get("price", "").strip()[:30]
         requested_platform = request.args.get("marketplace", "Toutes").strip()[:80]
-        selected_platform = requested_platform if requested_platform in {"Toutes", *active_marketplaces} else "Toutes"
-        reference_saisie = request.args.get("ref", "").strip()[:60]
-        reference_stricte = request.args.get("strict") == "1" and bool(_normalized_reference(reference_saisie))
+        state["selected_platform"] = requested_platform if requested_platform in {"Toutes", *active_marketplaces} else "Toutes"
+        state["reference_saisie"] = request.args.get("ref", "").strip()[:60]
+        state["reference_stricte"] = request.args.get("strict") == "1" and bool(_normalized_reference(state["reference_saisie"]))
 
-    if request.method == "POST":
+    elif request.method == "POST":
         recherche = request.form.get("marque", "").strip()[:120]
-        understood = understand_query(recherche) if recherche else None
-        interpreted_query = understood.canonical if understood and understood.corrected else None
+        universe = request.form.get("universe", "").strip().lower()[:30]
         prix_saisi = request.form.get("prix", "").strip()[:30]
         selected_platform = request.form.get("plateforme", "Toutes").strip()[:80]
         reference_saisie = request.form.get("reference_exacte", "").strip()[:60]
         reference_stricte = request.form.get("reference_stricte") == "1"
-        allowed_platforms = {"Toutes", *active_marketplaces}
-        if selected_platform not in allowed_platforms:
-            erreur = _message("invalid_marketplace")
-            selected_platform = "Toutes"
         lots_raw = request.form.get("lots", "").strip()
         default_initial_lots = MOBILE_INITIAL_RESULTS if _is_mobile_request() else INITIAL_RESULTS
         try:
             initial_lots = max(1, min(int(lots_raw), MAX_BATCH_SIZE)) if lots_raw else default_initial_lots
         except (TypeError, ValueError):
             initial_lots = default_initial_lots
-        normalized_reference = _normalized_reference(reference_saisie)
-        reference_stricte = reference_stricte and bool(normalized_reference)
-        if reference_saisie and len(normalized_reference) < 3:
-            erreur = _message("invalid_reference")
-        if recherche and prix_saisi:
-            try:
-                prix = float(prix_saisi)
-                if not (0 < prix <= 1_000_000):
-                    erreur = _message("price_range")
-                elif erreur is None:
-                    plateformes = None if selected_platform == "Toutes" else [selected_platform]
-                    base_connector_query = _canonicalize_search_query(recherche)
-                    connector_query = (
-                        base_connector_query
-                        if not normalized_reference or normalized_reference in _normalized_reference(base_connector_query)
-                        else f"{base_connector_query} {reference_saisie}"
-                    )
-                    # Recherche "Toutes" : seules les sources réellement rapides construisent
-                    # le premier rendu. ASOS/Cdiscount (recherche profonde), AliExpress, Vinted et Grailed
-                    # continuent ensuite indépendamment. Une source lente ne bloque donc plus
-                    # l'affichage initial.
-                    if plateformes is None:
-                        fast_platforms = [
-                            name for name in PROGRESSIVE_FAST_SOURCES
-                            if name in active_marketplaces
-                        ]
-                        progressive_sources = [
-                            name for name in PROGRESSIVE_BACKGROUND_SOURCES
-                            if name in active_marketplaces
-                        ]
-                        # Tout connecteur actif non encore classé est traité en
-                        # arrière-plan par défaut : une nouvelle source ne doit
-                        # jamais ralentir accidentellement le premier rendu.
-                        progressive_sources.extend(
-                            name for name in active_marketplaces
-                            if name not in fast_platforms and name not in progressive_sources
-                        )
-                    else:
-                        fast_platforms = []
-                        progressive_sources = []
+        state.update(_run_radar_search(
+            recherche, prix_saisi, selected_platform, reference_saisie,
+            reference_stricte, initial_lots, active_marketplaces, universe=universe,
+        ))
+        if state["search_token"] and not state["erreur"]:
+            session["lr_search_token"] = state["search_token"]
+            session["lr_search_signature"] = _search_signature(
+                recherche, prix_saisi, state["selected_platform"], reference_saisie, reference_stricte
+            )
 
-                    progressive = plateformes is None and bool(progressive_sources)
-                    if progressive:
-                        fast_started = perf_counter()
-                        # Premier rendu = seulement ce qu'il faut pour remplir
-                        # l'écran. Les pages suivantes restent disponibles via
-                        # l'infinite scroll, donc inutile d'analyser 100 cartes ici.
-                        # V2.9.3 : premier affichage réellement rapide.
-                        # On classe un petit lot eBay immédiatement ; les autres
-                        # sources et pages enrichissent ensuite sans bloquer le rendu.
-                        fast_limit = 14 if _is_mobile_request() else 18
-                        all_results = rechercher_multi_marketplaces(
-                            marque=connector_query,
-                            prix_max=prix,
-                            plateformes=fast_platforms,
-                            limite=fast_limit,
-                            delai_total_secondes=(6 if IS_RENDER_RUNTIME else 12),
-                            max_workers=min(2, max(1, len(fast_platforms))),
-                        ) if fast_platforms else []
-                        all_results = _rank_by_reference(all_results, reference_saisie, reference_stricte)
-                        owner = session.get("csrf_token")
-                        search_token = _cache_results(
-                            all_results,
-                            owner,
-                            pending_sources=progressive_sources,
-                            completed_sources=fast_platforms,
-                            search_query=connector_query,
-                            search_price=prix,
-                        )
-                        search_pending = bool(progressive_sources)
-                        print(
-                            f"[PROGRESSIF] premiers résultats prêts: {len(all_results)} "
-                            f"en {perf_counter()-fast_started:.2f}s | "
-                            f"arrière-plan: {', '.join(progressive_sources)} "
-                            f"| workers={_PROGRESSIVE_WORKERS}"
-                        )
-                        for source in progressive_sources:
-                            _progressive_executor.submit(
-                                _finish_progressive_source,
-                                search_token, connector_query, prix, source,
-                                reference_saisie, reference_stricte, owner,
-                            )
-                    else:
-                        single_limit = min(
-                            SEARCH_RESULT_LIMIT,
-                            max(80, min(initial_lots * 2, 120)),
-                        )
-                        all_results = rechercher_multi_marketplaces(
-                            marque=connector_query, prix_max=prix,
-                            plateformes=plateformes, limite=single_limit
-                        )
-                        all_results = _rank_by_reference(all_results, reference_saisie, reference_stricte)
-                        search_token = _cache_results(
-                            all_results, session.get("csrf_token"),
-                            search_query=connector_query, search_price=prix,
-                        )
-                    first_page = _result_page(search_token, 0, initial_lots, identity="confirmed", owner=session.get("csrf_token")) if search_token else None
-                    annonces = first_page["results"] if first_page else []
-                    total_results = first_page["total"] if first_page else 0
-            except ValueError:
-                erreur = _message("invalid_price")
-            except Exception:
-                app.logger.exception("Échec contrôlé d'une recherche radar")
-                erreur = _message("search_error")
-        else:
-            erreur = _message("missing_fields")
+    return _render_search_page(state, catalog_sites, active_marketplaces)
 
+
+def _render_search_page(state, catalog_sites, active_marketplaces):
     return render_template(
         "index.html",
         marques=MARQUES,
         marketplaces=list(active_marketplaces),
         catalog_site_count=len(catalog_sites),
-        annonces=annonces,
-        recherche=recherche,
-        prefill_query=prefill_query,
-        erreur=erreur,
-        prix_saisi=prix_saisi,
-        selected_platform=selected_platform,
-        reference_saisie=reference_saisie,
-        reference_stricte=reference_stricte,
-        search_token=search_token,
-        total_results=total_results,
-        initial_results=initial_lots,
-        search_pending=search_pending,
-        search_generation=search_generation,
-        interpreted_query=interpreted_query,
+        annonces=state["annonces"],
+        recherche=state["recherche"],
+        prefill_query=state["prefill_query"],
+        erreur=state["erreur"],
+        prix_saisi=state["prix_saisi"],
+        selected_platform=state["selected_platform"],
+        reference_saisie=state["reference_saisie"],
+        reference_stricte=state["reference_stricte"],
+        search_token=state["search_token"],
+        total_results=state["total_results"],
+        initial_results=state["initial_lots"],
+        search_pending=state["search_pending"],
+        search_generation=state["search_generation"],
+        interpreted_query=state["interpreted_query"],
+        index_mode=state["index_mode"],
+        index_hit_count=state["index_hit_count"],
+        index_age_seconds=state["index_age_seconds"],
+        universe_active=state["universe_active"],
+        page=state.get("page", 1),
+        total_pages=state.get("total_pages", 1),
+        page_size=SEARCH_PAGE_SIZE,
         app_version=APP_VERSION,
         asset_version=ASSET_VERSION,
         mobile_request=_is_mobile_request(),
@@ -1547,6 +2068,105 @@ def accueil():
         csrf_token=session["csrf_token"],
         csp_nonce=g.csp_nonce,
     )
+
+
+@app.get("/search")
+def search_share_page():
+    """Rendu serveur d'une page de résultats partageable.
+
+    URL : /search?q=&price=&marketplace=&ref=&strict=&page=N
+    Quand la recherche correspond à celle de la session, le token est réutilisé
+    (aucune nouvelle frappe des marketplaces). Sinon une recherche réelle est
+    relancée puis la page demandée est affichée.
+    """
+    catalog_sites, active_marketplaces = _app_metadata()
+    recherche = request.args.get("q", "").strip()[:120]
+    prix_saisi = request.args.get("price", "").strip()[:30]
+    requested_platform = request.args.get("marketplace", "Toutes").strip()[:80]
+    selected_platform = requested_platform if requested_platform in {"Toutes", *active_marketplaces} else "Toutes"
+    reference_saisie = request.args.get("ref", "").strip()[:60]
+    reference_stricte = request.args.get("strict") == "1" and bool(_normalized_reference(reference_saisie))
+    try:
+        page = max(1, min(int(request.args.get("page", "1")), 500))
+    except (TypeError, ValueError):
+        page = 1
+    offset = (page - 1) * SEARCH_PAGE_SIZE
+
+    state = {
+        "annonces": [],
+        "recherche": recherche or None,
+        "erreur": None,
+        "search_token": None,
+        "total_results": 0,
+        "selected_platform": selected_platform,
+        "prix_saisi": prix_saisi,
+        "prefill_query": recherche,
+        "reference_saisie": reference_saisie,
+        "reference_stricte": reference_stricte,
+        "initial_lots": SEARCH_PAGE_SIZE,
+        "search_pending": False,
+        "search_generation": 0,
+        "interpreted_query": None,
+        "index_mode": False,
+        "index_hit_count": 0,
+        "index_age_seconds": None,
+        "universe_active": False,
+        "page": page,
+        "total_pages": 1,
+    }
+
+    if not recherche:
+        state["erreur"] = _message("missing_fields")
+        return _render_search_page(state, catalog_sites, active_marketplaces)
+
+    signature = _search_signature(recherche, prix_saisi, selected_platform, reference_saisie, reference_stricte)
+    owner = session.get("csrf_token")
+    cached_token = None
+    cached_entry = None
+    if session.get("lr_search_signature") == signature:
+        with _cache_lock:
+            entry = _search_cache.get(str(session.get("lr_search_token") or ""))
+            if entry is not None and secrets.compare_digest(str(entry.get("owner") or ""), str(owner or "")):
+                cached_token = str(session.get("lr_search_token"))
+                cached_entry = entry
+
+    if cached_token and cached_entry is not None:
+        first_page = _result_page(cached_token, offset, limit=SEARCH_PAGE_SIZE, identity="confirmed", owner=owner)
+        state["search_token"] = cached_token
+        state["search_pending"] = bool(cached_entry.get("pending"))
+        state["search_generation"] = int(cached_entry.get("generation", 0))
+        state["index_mode"] = bool(cached_entry.get("index_mode"))
+        state["index_hit_count"] = int(cached_entry.get("index_hit_count", 0))
+        state["index_age_seconds"] = cached_entry.get("index_age_seconds")
+    else:
+        initial = _run_radar_search(
+            recherche, prix_saisi, selected_platform, reference_saisie,
+            reference_stricte, SEARCH_PAGE_SIZE, active_marketplaces,
+        )
+        state.update({key: value for key, value in initial.items() if key in state})
+        if state["search_token"] and not state["erreur"]:
+            session["lr_search_token"] = state["search_token"]
+            session["lr_search_signature"] = signature
+        first_page = (
+            _result_page(state["search_token"], offset, limit=SEARCH_PAGE_SIZE, identity="confirmed", owner=owner)
+            if state["search_token"] else None
+        )
+
+    if first_page:
+        if state["page"] > first_page["total_pages"] and not state.get("search_pending"):
+            state["page"] = first_page["total_pages"]
+            first_page = _result_page(
+                state["search_token"], (state["page"] - 1) * SEARCH_PAGE_SIZE,
+                limit=SEARCH_PAGE_SIZE, identity="confirmed", owner=owner,
+            )
+        state["annonces"] = first_page["results"]
+        state["total_results"] = first_page["total"]
+        state["initial_lots"] = (state["page"] - 1) * SEARCH_PAGE_SIZE + len(first_page["results"])
+        state["page"] = first_page["page"]
+        state["total_pages"] = first_page["total_pages"]
+    else:
+        state["annonces"] = []
+    return _render_search_page(state, catalog_sites, active_marketplaces)
 
 
 if __name__ == "__main__":

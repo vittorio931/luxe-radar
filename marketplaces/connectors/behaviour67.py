@@ -1455,6 +1455,12 @@ class Behaviour67Connector(MarketplaceConnector):
     enabled = True
     currency = "INR"
 
+    supports_pagination = False
+    expansion_page_size = 30
+    expansion_recall_cap = 30
+    max_pages = 1
+    cooldown_seconds = 0.5
+
     def search(
         self,
         query,

@@ -1,0 +1,20 @@
+{
+  "version": "3.3.0",
+  "name": "Shopping-first UI",
+  "base": "3.2.0 NOVA",
+  "changes": [
+    "Navigation horizontale visible avec Accueil, Comparer les prix, Favoris, Alertes prix, Historique, Outils, Catalogue, Premium",
+    "Recherche globale persistante et recherche principale simplifiée",
+    "Accueil de comparateur avec recherches populaires, catégories et raccourcis",
+    "Recherches récentes visibles sur accueil et Radar",
+    "Thème clair par défaut, thème sombre à contraste amélioré, neuf accents",
+    "Filtres secondaires repliés pour réduire la complexité",
+    "Moteur de pertinence V3.2.0 conservé avec modes recommandé, exact et tout voir",
+    "Favoris, alertes prix, comparateur, historique, recherche image, export et scroll infini conservés"
+  ],
+  "security": {
+    "env_included": false,
+    "captcha_bypass": false,
+    "payments_changed": false
+  }
+}

@@ -1037,7 +1037,7 @@ def run_command(cmd, cwd: Path, timeout=120, check=False, capture=False, env=Non
 def iter_backup_files(root: Path, include_secrets=False):
     special_files = {".gitignore", ".dockerignore", ".env.example", "Procfile"}
     source_suffixes = {".py", ".html", ".json", ".md", ".txt", ".toml", ".yaml", ".yml", ".ini", ".cfg", ".js", ".css", ".svg", ".webmanifest", ".vtt"}
-    public_asset_suffixes = {".png", ".webp", ".jpg", ".jpeg", ".ico", ".mp4"}
+    public_asset_suffixes = {".png", ".webp", ".jpg", ".jpeg", ".ico"}
     for path in root.rglob("*"):
         if not path.is_file():
             continue
@@ -1050,8 +1050,7 @@ def iter_backup_files(root: Path, include_secrets=False):
             continue
         # Sources/configs/templates principalement ; garde aussi quelques fichiers utiles.
         is_public_asset = rel.parts and rel.parts[0] == "static" and rel.suffix.lower() in public_asset_suffixes
-        is_campaign_source = rel.parts[:3] == ("media", "campaign", "assets") and rel.suffix.lower() in public_asset_suffixes
-        if rel.suffix.lower() not in source_suffixes and rel.name not in special_files and rel.name != ".env" and not is_public_asset and not is_campaign_source:
+        if rel.suffix.lower() not in source_suffixes and rel.name not in special_files and rel.name != ".env" and not is_public_asset:
             continue
         yield path, rel
 
@@ -1611,7 +1610,6 @@ def run_smoke_files(root: Path):
         root / "test_security_ux.py",
         root / "test_image_search.py",
         root / "test_billing_stripe.py",
-        root / "test_campaign_media.py",
         root / "test_behaviour67_smoke.py",
     ]
     ran = 0

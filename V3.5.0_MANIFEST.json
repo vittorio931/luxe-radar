@@ -1,0 +1,22 @@
+{
+  "version": "3.5.0",
+  "asset_version": "20260815-350",
+  "base": "3.4.0",
+  "release": "FASHION EXPANSION",
+  "new_sources": [
+    "i-Run",
+    "Direct Running",
+    "Alltricks",
+    "Deporvillage",
+    "Running Point",
+    "21RUN",
+    "MisterRunning",
+    "Hardloop",
+    "Ekosport",
+    "Courir"
+  ],
+  "active_connectors_expected_min": 24,
+  "catalog_sites_expected_min": 1233,
+  "payments_enabled_by_default": false,
+  "notes": "Fashion-first expansion + exact-model quality guard. Public pages only; no access-control bypass."
+}

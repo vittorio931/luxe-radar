@@ -241,6 +241,12 @@ class SSENSEConnector(MarketplaceConnector):
     enabled = True
     currency = "EUR"
 
+    supports_pagination = False
+    expansion_page_size = 120
+    expansion_recall_cap = 120
+    max_pages = 1
+    cooldown_seconds = 0.5
+
     def search(self, query, price_max=None, limit=20):
         query = str(query or "").strip()
         if not query:
