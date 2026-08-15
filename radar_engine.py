@@ -2882,7 +2882,7 @@ def rechercher_multi_marketplaces(
             print(
                 "[MULTI][TEMPS] "
                 f"{plateforme}: {perf_counter()-debut:.2f}s | "
-                f"{len(annonces or [])} candidat(s)"
+                f"{len(annonces or [])} candidat(s) | page={page_int}"
             )
             _ajouter_annonces(plateforme, annonces)
         except Exception as e:
@@ -2938,7 +2938,7 @@ def rechercher_multi_marketplaces(
                     print(
                         "[MULTI][TEMPS] "
                         f"{plateforme}: {perf_counter()-debut_plateforme:.2f}s | "
-                        f"{len(annonces or [])} candidat(s)"
+                        f"{len(annonces or [])} candidat(s) | page={page_int}"
                     )
                     _ajouter_annonces(plateforme, annonces)
             except TimeoutError:
@@ -2965,12 +2965,23 @@ def rechercher_multi_marketplaces(
     resultats = []
     stats_bruts = {}
     stats_retenus = {}
+    stats_prix_rejet = {}
     exemples_rejetes = {}
     diagnostics_identite = {}
 
     for annonce in resultats_bruts:
         marketplace_stat = str(annonce.get("marketplace") or "Inconnu")
         stats_bruts[marketplace_stat] = stats_bruts.get(marketplace_stat, 0) + 1
+
+        # V4.1 : observabilité du goulot — séparer les rejets de prix des
+        # rejets qualité/pertinence dans la ligne [MULTI][FILTRE].
+        prix_annonce = _safe_float(annonce.get("prix"))
+        if prix_annonce is None or (
+            prix_max_float is not None
+            and prix_max_float > 0
+            and prix_annonce > prix_max_float
+        ):
+            stats_prix_rejet[marketplace_stat] = stats_prix_rejet.get(marketplace_stat, 0) + 1
 
         analyse = _analyser_resultat_multi(
             annonce,
@@ -3018,9 +3029,12 @@ def rechercher_multi_marketplaces(
     for marketplace_stat in sorted(set(stats_bruts) | set(stats_retenus)):
         bruts = stats_bruts.get(marketplace_stat, 0)
         retenus = stats_retenus.get(marketplace_stat, 0)
+        prix_rejet = stats_prix_rejet.get(marketplace_stat, 0)
+        qualite_rejet = max(0, bruts - retenus - prix_rejet)
         print(
             "[MULTI][FILTRE] "
-            f"{marketplace_stat}: {bruts} bruts -> {retenus} pertinents"
+            f"{marketplace_stat}: {bruts} bruts -> {retenus} pertinents "
+            f"(prix={prix_rejet}, qualite={qualite_rejet})"
         )
         identite_stats = diagnostics_identite.get(marketplace_stat)
         if identite_stats and identite_stats.get("scores"):

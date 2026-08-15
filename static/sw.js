@@ -1,12 +1,12 @@
-const CACHE = 'luxe-radar-shell-v370';
+const CACHE = 'luxe-radar-shell-v371';
 const SHELL = [
-  '/static/app.css?v=20260815-370',
-  '/static/app.js?v=20260815-370',
-  '/static/risk.js?v=20260815-370',
+  '/static/app.css?v=20260816-371',
+  '/static/app.js?v=20260816-371',
+  '/static/risk.js?v=20260816-371',
   '/static/app-icon.svg',
-  '/static/app-icon-192.png?v=20260815-370',
-  '/static/app-icon-512.png?v=20260815-370',
-  '/static/manifest.webmanifest?v=20260815-370',
+  '/static/app-icon-192.png?v=20260816-371',
+  '/static/app-icon-512.png?v=20260816-371',
+  '/static/manifest.webmanifest?v=20260816-371',
   '/static/offline.html',
   '/static/offline.css',
   '/static/offline.js'

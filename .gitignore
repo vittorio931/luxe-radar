@@ -16,6 +16,9 @@ __pycache__/
 .luxe_radar/
 backups/
 
+# Bases SQLite de runtime (index + sessions de recherche) : ne jamais committer
+instance/
+
 # Journaux et fichiers système
 *.log
 .DS_Store

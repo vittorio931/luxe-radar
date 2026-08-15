@@ -27,6 +27,7 @@ except Exception:
 
 import billing_stripe
 import index_engine
+import search_sessions
 
 from connector_registry import get_available_connectors
 from marketplaces.connectors import get_connector
@@ -52,8 +53,8 @@ def _parse_intent(query):
 
 
 app = Flask(__name__)
-APP_VERSION = "3.7.0"
-ASSET_VERSION = "20260815-370"
+APP_VERSION = "3.7.1"
+ASSET_VERSION = "20260816-371"
 IS_PRODUCTION = os.environ.get("LUXE_RADAR_ENV", "development").lower() == "production"
 IS_RENDER_RUNTIME = bool(
     os.environ.get("RENDER")
@@ -498,6 +499,15 @@ MAX_CACHED_SEARCHES = _bounded_env_int(
     3,
     30,
 )
+# V4.1 : les tokens de recherche survivent aux restarts Gunicorn via SQLite.
+# 30 à 60 minutes, nettoyés périodiquement en arrière-plan du cache RAM.
+SEARCH_SESSION_TTL_SECONDS = _bounded_env_int(
+    "LUXE_RADAR_SEARCH_SESSION_TTL_MINUTES",
+    45,
+    30,
+    60,
+) * 60
+_SESSION_DISK_CLEANUP_EVERY_SECONDS = 300
 
 # Pipeline progressif V2.8.6. Seules deux sources HTTP éprouvées construisent
 # le premier rendu ; toutes les autres enrichissent ensuite le même catalogue.
@@ -751,11 +761,226 @@ def _clean_cache(now=None):
         owner = str(entry.get("owner") or "")
         if owner and _progressive_owner_tokens.get(owner) == token:
             _progressive_owner_tokens.pop(owner, None)
+        # V4.1 : NE PAS supprimer la ligne SQLite ici. L'éviction RAM (20-30 min)
+        # précède le TTL session (45 min) : la ligne reste pour la restauration
+        # après un restart. Seul _clean_sessions_disk la purge (by updated_at).
     while len(_search_cache) > MAX_CACHED_SEARCHES:
         token, entry = _search_cache.popitem(last=False)
         owner = str(entry.get("owner") or "")
         if owner and _progressive_owner_tokens.get(owner) == token:
             _progressive_owner_tokens.pop(owner, None)
+    _clean_sessions_disk(now)
+
+
+# V4.1 : nettoyage borné des sessions SQLite (jamais plus d'une écriture
+# toutes les 5 minutes, même si _clean_cache est appelé très souvent).
+_session_disk_cleanup_next = 0.0
+
+
+def _clean_sessions_disk(now=None):
+    global _session_disk_cleanup_next
+    now = monotonic() if now is None else now
+    if now < _session_disk_cleanup_next:
+        return
+    _session_disk_cleanup_next = now + _SESSION_DISK_CLEANUP_EVERY_SECONDS
+    try:
+        search_sessions.delete_expired(SEARCH_SESSION_TTL_SECONDS)
+    except Exception:
+        app.logger.warning("Nettoyage des sessions de recherche indisponible", exc_info=True)
+
+
+def _persistable_state(entry):
+    """Copie légère des curseurs/statuts à garder entre deux workers."""
+    results = []
+    for item in (entry.get("results") or [])[:SEARCH_RESULT_LIMIT]:
+        cleaned = dict(item)
+        cleaned.pop("_rank_index", None)
+        results.append(cleaned)
+    return {
+        "results": results,
+        "page_state": dict(entry.get("page_state") or {}),
+        "page_empty": dict(entry.get("page_empty") or {}),
+        "recall_limit": dict(entry.get("recall_limit") or {}),
+        "recall_empty": dict(entry.get("recall_empty") or {}),
+        "page_exhausted": list(entry.get("page_exhausted") or []),
+        "discovery_cursor": int(entry.get("discovery_cursor", 0)),
+        "discovery_has_more": bool(entry.get("discovery_has_more", True)),
+        "expansion_round": int(entry.get("expansion_round", 0)),
+        "expansion_exhausted": bool(entry.get("expansion_exhausted")),
+        "catalog_scanned": int(entry.get("catalog_scanned", 0)),
+        "source_pages": dict(entry.get("source_pages") or {}),
+        "completed_sources": list(entry.get("completed_sources") or []),
+        "failed_sources": list(entry.get("failed_sources") or []),
+        "pending_sources": list(entry.get("pending_sources") or []),
+        "live_added": int(entry.get("live_added", 0)),
+        "duplicates_total": int(entry.get("duplicates_total", 0)),
+        "received_total": int(entry.get("received_total", 0)),
+        "generation": int(entry.get("generation", 0)),
+        "index_mode": bool(entry.get("index_mode")),
+        "index_hit_count": int(entry.get("index_hit_count", 0)),
+        "index_total": int(entry.get("index_total", 0)),
+        "index_age_seconds": entry.get("index_age_seconds"),
+    }
+
+
+def _persist_search_session(entry, token, owner):
+    """Upsert SQLite, hors chemin critique : un échec ne casse jamais la réponse."""
+    if not token:
+        return
+    try:
+        search_sessions.save_search_session(
+            token=token,
+            owner=owner,
+            search_request=str(entry.get("search_query") or ""),
+            search_price_raw=str(entry.get("search_price") or "")
+            if entry.get("search_price") not in (None, "")
+            else "",
+            selected_platform=str(entry.get("selected_platform") or "Toutes"),
+            reference=str(entry.get("reference") or ""),
+            reference_stricte=bool(entry.get("reference_stricte")),
+            universe=str(entry.get("universe") or ""),
+            state=_persistable_state(entry),
+        )
+    except Exception:
+        app.logger.warning("Session de recherche non persistée: %s", token, exc_info=True)
+
+
+def _apply_restored_state(token, restored):
+    """Réapplique les curseurs/infinite-scroll après une restauration SQLite."""
+    with _cache_lock:
+        _clean_cache()
+        entry = _search_cache.get(token)
+        if entry is None:
+            return
+        for key in (
+            "page_state", "page_empty", "recall_limit", "recall_empty",
+            "page_exhausted", "discovery_cursor", "discovery_has_more",
+            "expansion_round", "expansion_exhausted", "catalog_scanned",
+            "source_pages", "completed_sources", "failed_sources",
+            "live_added", "duplicates_total", "received_total",
+            "generation", "index_hit_count", "index_total",
+            "index_age_seconds", "index_mode",
+        ):
+            if key in restored:
+                entry[key] = restored[key]
+        entry["index_mode"] = bool(restored.get("index_mode", entry.get("index_mode")))
+    _persist_search_session(entry, token, str(entry.get("owner") or ""))
+
+
+# Verrou anti-double-restauration : si deux requêtes concurrentes découvrent le
+# même token manquant, une seule reconstruit le cache, l'autre attend la RAM.
+_restore_lock = Lock()
+_restore_in_progress = {}
+
+
+def _restore_search_session(token, owner, active_marketplaces):
+    """Reconstruit un token disparu du RAM depuis l'état SQLite (après restart).
+
+    Le catalogue exact (résultats + curseurs d'infinite scroll + paramètres)
+    est ressemé dans le cache RAM. Les sources encore en attente (ni terminées
+    ni en échec) sont relancées pour continuer le pipeline progressif.
+    """
+    owner = str(owner or "")
+    if not owner or not token:
+        return None
+    with _restore_lock:
+        if _restore_in_progress.get(token):
+            return None
+        with _cache_lock:
+            _clean_cache()
+            existing = _search_cache.get(token)
+            if existing is not None and secrets.compare_digest(str(existing.get("owner") or ""), owner):
+                return existing
+        _restore_in_progress[token] = True
+    try:
+        try:
+            record = search_sessions.load_search_session(token)
+        except Exception:
+            app.logger.warning("Session SQLite illisible: %s", token, exc_info=True)
+            return None
+        if record is None:
+            return None
+        if not secrets.compare_digest(str(record.get("owner") or ""), owner):
+            return None
+        if (time.time() - float(record.get("updated_at") or 0)) > SEARCH_SESSION_TTL_SECONDS:
+            try:
+                search_sessions.delete_search_session(token)
+            except Exception:
+                pass
+            return None
+
+        state = dict(record.get("state") or {})
+        done = set(str(name) for name in (state.get("completed_sources") or []))
+        done.update(str(name) for name in (state.get("failed_sources") or []))
+        pending = [str(name) for name in (state.get("pending_sources") or []) if str(name) not in done]
+        search_request = str(record.get("search_request") or "").strip()
+        if not search_request:
+            return None
+        price_raw = str(record.get("search_price_raw") or "").strip()
+        try:
+            price = float(price_raw) if price_raw else 1_000_000.0
+        except (TypeError, ValueError):
+            price = 1_000_000.0
+        selected_platform = str(record.get("selected_platform") or "Toutes")
+        reference = str(record.get("reference") or "").strip()
+        reference_stricte = bool(record.get("reference_stricte"))
+        universe = str(record.get("universe") or "").strip().lower()
+        results = [dict(item) for item in (state.get("results") or [])]
+
+        with _cache_lock:
+            _clean_cache()
+            token_alive = _search_cache.get(token)
+        if token_alive is not None:
+            return token_alive
+
+        _cache_results(
+            results, owner,
+            pending_sources=pending,
+            completed_sources=list(state.get("completed_sources") or []),
+            search_query=search_request, search_price=price,
+            index_mode=bool(state.get("index_mode")),
+            index_hit_count=int(state.get("index_hit_count", 0)),
+            index_total=int(state.get("index_total", 0)),
+            index_age_seconds=state.get("index_age_seconds"),
+            selected_platform=selected_platform,
+            reference=reference,
+            reference_stricte=reference_stricte,
+            universe=universe,
+            reuse_token=token,
+        )
+        _apply_restored_state(token, state)
+        if pending:
+            ref = "" if universe else reference
+            strict = False if universe else reference_stricte
+            for source in pending:
+                _progressive_executor.submit(
+                    _finish_progressive_source,
+                    token, search_request, price, source, ref, strict, owner,
+                )
+        print(f"[SESSION][RESTORE] {token} {len(results)} résultats restaurés, {len(pending)} source(s) relancée(s)")
+        with _cache_lock:
+            _clean_cache()
+            return _search_cache.get(token)
+    finally:
+        with _restore_lock:
+            _restore_in_progress.pop(token, None)
+
+
+def _ensure_search_session(token, owner, active_marketplaces):
+    """Retourne l'entrée RAM d'un token, en le restaurant depuis SQLite au besoin."""
+    owner = str(owner or "")
+    if not token:
+        return None
+    with _cache_lock:
+        _clean_cache()
+        entry = _search_cache.get(token)
+        if entry is not None:
+            if entry.get("owner") and not secrets.compare_digest(str(entry.get("owner") or ""), owner):
+                return None
+            return entry
+    if not owner:
+        return None
+    return _restore_search_session(token, owner, active_marketplaces)
 
 
 def _app_metadata():
@@ -784,8 +1009,10 @@ def _cache_results(
     results, owner=None, pending_sources=None, completed_sources=None,
     search_query=None, search_price=None, index_mode=False,
     index_hit_count=0, index_total=0, index_age_seconds=None,
+    selected_platform=None, reference=None, reference_stricte=False,
+    universe="", reuse_token=None,
 ):
-    token = uuid4().hex
+    token = reuse_token or uuid4().hex
     pending_sources = list(dict.fromkeys(str(source) for source in (pending_sources or []) if str(source)))
     completed_sources = list(dict.fromkeys(str(source) for source in (completed_sources or []) if str(source)))
     owner_key = str(owner or "")
@@ -799,7 +1026,7 @@ def _cache_results(
         if owner_key:
             previous_token = _progressive_owner_tokens.get(owner_key)
             previous = _search_cache.get(previous_token) if previous_token else None
-            if previous is not None:
+            if previous is not None and previous_token != token:
                 previous["cancelled"] = True
                 previous["pending"] = False
                 previous["pending_sources"] = []
@@ -826,6 +1053,11 @@ def _cache_results(
             "index_hit_count": int(index_hit_count or 0),
             "index_total": int(index_total or 0),
             "index_age_seconds": _safe_number(index_age_seconds, None),
+            # V4.1 : paramètres d'origine persistés pour restaurer un token.
+            "selected_platform": str(selected_platform or ""),
+            "reference": str(reference or ""),
+            "reference_stricte": bool(reference_stricte),
+            "universe": str(universe or ""),
             # Infinite-scroll V3.7 MAX RECALL: every source that can expose a
             # real page gets its own cursor. Non-page connectors use a bounded
             # recall widening pass (initial cap -> 100) instead of fabricating
@@ -847,7 +1079,9 @@ def _cache_results(
             "duplicates_total": 0,
             "received_total": 0,
         }
+        entry = _search_cache[token]
         _clean_cache()
+    _persist_search_session(entry, token, owner_key)
     return token
 
 
@@ -936,6 +1170,8 @@ def _progressive_task_allowed(token, source, owner):
 
 def _complete_progressive_source(token, source, additions, reference, strict, owner):
     """Fusion atomique d'une source progressive terminée."""
+    result = None
+    snapshot = None
     with _cache_lock:
         _clean_cache()
         entry = _search_cache.get(token)
@@ -973,11 +1209,16 @@ def _complete_progressive_source(token, source, additions, reference, strict, ow
         # lorsqu'une source termine avec zéro nouveauté.
         if len(results) != len(existing):
             entry["generation"] = int(entry.get("generation", 0)) + 1
-        return len(existing), len(results), bool(pending)
+        snapshot = dict(entry)
+        result = (len(existing), len(results), bool(pending))
+    if result is not None and snapshot is not None:
+        _persist_search_session(snapshot, token, owner)
+    return result
 
 
 def _fail_progressive_source(token, source, owner):
     ended = False
+    snapshot = None
     with _cache_lock:
         entry = _search_cache.get(token)
         if entry is None or entry.get("cancelled"):
@@ -992,6 +1233,9 @@ def _fail_progressive_source(token, source, owner):
         entry["failed_sources"] = failed
         entry["pending"] = bool(entry["pending_sources"])
         ended = not entry["pending"]
+        snapshot = dict(entry)
+    if snapshot is not None:
+        _persist_search_session(snapshot, token, owner)
     if ended:
         _log_search_summary(token, source, 0.0)
 
@@ -1059,6 +1303,7 @@ def _finish_progressive_source(token, query, price, source, reference, strict, o
         return
 
     started = perf_counter()
+    network_elapsed = None
     try:
         # Mono-source : radar_engine exécute désormais directement le connecteur,
         # sans sous-executor impossible à annuler. Les deux connecteurs
@@ -1094,9 +1339,13 @@ def _finish_progressive_source(token, query, price, source, reference, strict, o
                 # recherche démarre Vinted/Grailed après une nouvelle requête.
                 if not _progressive_task_allowed(token, source, owner):
                     return
+                network_started = perf_counter()
                 additions = _search_source()
+                network_elapsed = perf_counter() - network_started
         else:
+            network_started = perf_counter()
             additions = _search_source()
+            network_elapsed = perf_counter() - network_started
         if not _progressive_task_allowed(token, source, owner):
             return
         _index_results_async(additions, query)
@@ -1110,12 +1359,15 @@ def _finish_progressive_source(token, query, price, source, reference, strict, o
         with _cache_lock:
             cached = _search_cache.get(token)
             page = int((cached.get("source_pages") or {}).get(source, 1)) if cached else 1
+            submitted_at = float((cached.get("submitted_at") or {}).get(source, started) or started) if cached else started
+        queue_wait = max(0.0, started - submitted_at)
         received = len(additions or [])
         new_count = max(0, total - before)
         duplicates = max(0, received - new_count)
         print(
             f"[PROGRESSIF][{source}][PAGE {page}] received={received} relevant={received} "
             f"new={new_count} duplicates={duplicates} rejected=0 "
+            f"network={network_elapsed:.2f}s queue={queue_wait:.2f}s "
             f"duration={elapsed:.2f}s total={total}"
         )
         if not still_pending:
@@ -1303,6 +1555,7 @@ def _result_page(token, offset, limit=RESULT_BATCH_SIZE, sort="relevance", marke
 def result_status(token):
     if len(token) != 32 or any(char not in "0123456789abcdef" for char in token):
         return jsonify({"error": "Identifiant de recherche invalide."}), 400
+    _ensure_search_session(token, session.get("csrf_token"), _app_metadata()[1])
     with _cache_lock:
         _clean_cache()
         entry = _search_cache.get(token)
@@ -1443,6 +1696,9 @@ def _expand_search_once(token, owner, marketplace="Toutes"):
       parallèle. Les 1000+ domaines ne sont jamais frappés simultanément.
     """
     owner = str(owner or "")
+    entry = _ensure_search_session(token, owner, _app_metadata()[1])
+    if entry is None:
+        return None, 404
     with _cache_lock:
         _clean_cache()
         entry = _search_cache.get(token)
@@ -1629,6 +1885,7 @@ def _expand_search_once(token, owner, marketplace="Toutes"):
             all(source in exhausted for source in EXPAND_ALL_SOURCES)
             and not bool(entry.get("discovery_has_more", True))
         )
+        _persist_search_session(entry, token, owner)
         return {
             "accepted": True,
             "busy": False,
@@ -1673,6 +1930,7 @@ def more_results(token):
         return jsonify({"error": "Tri invalide."}), 400
     marketplace = request.args.get("marketplace", "Toutes")[:80]
     allowed_marketplaces = set(_app_metadata()[1])
+    _ensure_search_session(token, session.get("csrf_token"), _app_metadata()[1])
     with _cache_lock:
         cache_entry = _search_cache.get(token)
         if cache_entry is not None and secrets.compare_digest(
@@ -1753,6 +2011,7 @@ def rank_results_by_image(token):
         feature = image_feature(upload.stream.read(MAX_IMAGE_BYTES + 1))
     except ValueError:
         return jsonify({"error": "Choisis une image JPEG, PNG ou WebP de 2 Mo maximum."}), 400
+    _ensure_search_session(token, session.get("csrf_token"), _app_metadata()[1])
     with _cache_lock:
         _clean_cache()
         entry = _search_cache.get(token)
@@ -1860,6 +2119,17 @@ def _run_radar_search(recherche, prix_saisi, selected_platform, reference_saisie
                 False if universe_active else state["reference_stricte"],
                 owner,
             )
+        if progressive_sources:
+            try:
+                with _cache_lock:
+                    cached = _search_cache.get(search_token)
+                    if cached is not None:
+                        stamped = dict(cached.get("submitted_at") or {})
+                        for source in progressive_sources:
+                            stamped[source] = perf_counter()
+                        cached["submitted_at"] = stamped
+            except Exception:
+                pass
 
     def _finalize_first_page():
         first_page = (
@@ -1919,6 +2189,10 @@ def _run_radar_search(recherche, prix_saisi, selected_platform, reference_saisie
                     search_query=connector_query, search_price=prix,
                     index_mode=state["index_mode"], index_hit_count=state["index_hit_count"],
                     index_total=indexed.total, index_age_seconds=state["index_age_seconds"],
+                    selected_platform=state["selected_platform"],
+                    reference=reference_saisie,
+                    reference_stricte=state["reference_stricte"],
+                    universe=universe,
                 )
                 _submit_progressive(state["search_token"], connector_query, prix)
                 _finalize_first_page()
@@ -1960,6 +2234,10 @@ def _run_radar_search(recherche, prix_saisi, selected_platform, reference_saisie
                     search_query=connector_query, search_price=prix,
                     index_mode=state["index_mode"], index_hit_count=state["index_hit_count"],
                     index_total=indexed.total, index_age_seconds=state["index_age_seconds"],
+                    selected_platform=state["selected_platform"],
+                    reference=reference_saisie,
+                    reference_stricte=state["reference_stricte"],
+                    universe=universe,
                 )
                 _submit_progressive(state["search_token"], connector_query, prix)
                 _finalize_first_page()
@@ -2123,12 +2401,13 @@ def search_share_page():
     owner = session.get("csrf_token")
     cached_token = None
     cached_entry = None
-    if session.get("lr_search_signature") == signature:
-        with _cache_lock:
-            entry = _search_cache.get(str(session.get("lr_search_token") or ""))
-            if entry is not None and secrets.compare_digest(str(entry.get("owner") or ""), str(owner or "")):
-                cached_token = str(session.get("lr_search_token"))
-                cached_entry = entry
+    if session.get("lr_search_signature") == signature and session.get("lr_search_token"):
+        restored_entry = _ensure_search_session(
+            str(session.get("lr_search_token")), owner, active_marketplaces
+        )
+        if restored_entry is not None:
+            cached_token = str(session.get("lr_search_token"))
+            cached_entry = restored_entry
 
     if cached_token and cached_entry is not None:
         first_page = _result_page(cached_token, offset, limit=SEARCH_PAGE_SIZE, identity="confirmed", owner=owner)

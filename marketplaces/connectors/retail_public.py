@@ -28,6 +28,10 @@ IS_RENDER = bool(
     or os.environ.get("LUXE_RADAR_ENV", "").lower() == "production"
 )
 HTTP_TIMEOUT = (2.5 if IS_RENDER else 4.0, 5.5 if IS_RENDER else 10.0)
+# V4.1 : budget temps réel par recherche publique. Une source lente ne doit
+# plus faire attendre le pipeline 25-30 s : on dépasse la deadline et on
+# renvoie ce qu'on a, sans essayer d'autres routes.
+SEARCH_BUDGET_SECONDS = 8.0 if IS_RENDER else 14.0
 USER_AGENT = (
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
     "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/151.0.0.0 Safari/537.36"
@@ -333,11 +337,16 @@ class _PublicRetailBase(MarketplaceConnector):
         print(f"[{self.name}] Recherche publique : {query} | page={page}")
         session = _session()
         try:
+            started = time.monotonic()
+            deadline = started + SEARCH_BUDGET_SECONDS
             raw = []
             last_status = None
             # Sur Render on limite à 2 routes candidates pour rester rapide.
             route_budget = 2 if IS_RENDER else 3
             for route_index, url in enumerate(urls[:route_budget], start=1):
+                if time.monotonic() > deadline:
+                    print(f"[{self.name}] budget de recherche atteint ({SEARCH_BUDGET_SECONDS:g}s) -> réponse partielle")
+                    break
                 try:
                     response = _safe_public_get(session, url, self.base_url)
                 except requests.RequestException as exc:
@@ -362,6 +371,11 @@ class _PublicRetailBase(MarketplaceConnector):
                 raw = parse_jsonld_products(text, self.base_url)
                 if not raw:
                     raw = parse_html_cards(text, self.base_url, self.allowed_path_hints)
+                print(
+                    f"[{self.name}][ROUTE {route_index}] "
+                    f"page={page} cartes_parsées={len(raw)} "
+                    f"route_ms={int((time.monotonic() - started) * 1000)}"
+                )
                 if raw:
                     break
             if not raw and last_status in {400, 403, 429}:
@@ -369,6 +383,7 @@ class _PublicRetailBase(MarketplaceConnector):
                 print(f"[{self.name}] aucune route publique exploitable -> pause temporaire")
             results = []
             seen = set()
+            parsed = 0
             for item in raw:
                 title = str(item.get("titre") or "").strip()
                 price = _safe_float(item.get("prix"))
@@ -381,6 +396,7 @@ class _PublicRetailBase(MarketplaceConnector):
                 if key in seen:
                     continue
                 seen.add(key)
+                parsed += 1
                 results.append({
                     "marketplace": self.name,
                     "titre": title,
@@ -407,7 +423,10 @@ class _PublicRetailBase(MarketplaceConnector):
                 })
                 if len(results) >= limit:
                     break
-            print(f"[{self.name}] {len(results)} resultats retenus")
+            print(
+                f"[{self.name}] raw={len(raw)} parsed={parsed} retenus={len(results)} "
+                f"durée={time.monotonic() - started:.2f}s"
+            )
             return results
         except requests.RequestException as exc:
             print(f"[{self.name}] Réseau indisponible : {exc}")

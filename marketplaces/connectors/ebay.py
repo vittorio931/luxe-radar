@@ -98,6 +98,9 @@ def creer_session_http():
 
         respect_retry_after_header=True,
         raise_on_status=False,
+        # V4.1 : une réponse 429 eBay peut demander un Retry-After de 30-60 s.
+        # On plafonne l'attente à 3 s pour ne pas bloquer le pipeline Render.
+        retry_after_max=3,
     )
 
     adapter = HTTPAdapter(

@@ -1,0 +1,25 @@
+{
+  "version": "3.7.1",
+  "name": "Search Session Hotfix",
+  "asset_version": "20260816-371",
+  "features": [
+    "SQLite persistence of search sessions (token + results + infinite-scroll cursors)",
+    "automatic RAM restore after Gunicorn worker restart (no more 404 on /expand)",
+    "expired-session cleanup and TTL guard",
+    "frontend session recovery on 404 (localStorage guard, 30 s anti-loop)",
+    "sources/health polling throttled to 60 s",
+    "latency instrumentation: page= per wave, network/queue/duration per source, raw/parsed/retenus per route",
+    "fail-fast retry caps (eBay Retry-After <= 3 s, retail route budget)"
+  ],
+  "safety": {
+    "stripe_default": "off",
+    "captcha_bypass": false,
+    "access_control_bypass": false,
+    "env_in_artifact": false
+  },
+  "limits": {
+    "max_index_results_per_query": 5000,
+    "search_session_ttl_minutes": 45,
+    "catalogue_is_real_only": true
+  }
+}
