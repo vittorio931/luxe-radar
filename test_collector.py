@@ -7,6 +7,7 @@ traces collector_runs, avant/après par seed, et le dédupe d'enqueue.
 
 import os
 import pathlib
+import sqlite3
 import tempfile
 import threading
 import time
@@ -267,6 +268,47 @@ def test_index_spillover():
         assert spilled["total"] == 6
         assert spilled["has_more"] is False
         assert index_engine.count_query_offers("Nike P-6000", path=db)["exact"] == 6
+
+
+def test_reads_survive_collector_writes():
+    """V3.8 prod : pendant les écritures continues du collecteur, les lectures
+    web (collector_stats / search) ne doivent jamais échouer en
+    « database is locked » (schéma DDL retiré du chemin chaud)."""
+    with _with_index_db() as db:
+        stop = threading.Event()
+
+        def writer():
+            page = 0
+            while not stop.is_set():
+                page += 1
+                offers = [_make_offer(page * 100 + n, title="Nike P-6000 blanc (annonce %d)" % (page * 100 + n))
+                          for n in range(1, 6)]
+                try:
+                    index_engine.upsert_results(offers, "Nike P-6000", path=db)
+                except Exception:
+                    pass
+
+        w = threading.Thread(target=writer, daemon=True)
+        w.start()
+        try:
+            failures = 0
+            worst = 0.0
+            for _ in range(40):
+                t0 = time.time()
+                try:
+                    index_engine.collector_stats(seed_query="Nike P-6000", path=db)
+                    index_engine.count_query_offers("Nike P-6000", path=db)
+                except sqlite3.OperationalError as exc:
+                    failures += 1
+                    if "locked" in str(exc).lower():
+                        failures += 10
+                worst = max(worst, time.time() - t0)
+                time.sleep(0.02)
+            assert failures == 0, f"{failures} échec(s) lecture pendant écritures"
+            assert worst < 2.0, f"lecture lente {worst:.2f}s"
+        finally:
+            stop.set()
+            w.join(timeout=5)
 
 
 def _main():

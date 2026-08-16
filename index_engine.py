@@ -24,6 +24,7 @@ import os
 from pathlib import Path
 import re
 import sqlite3
+import threading
 import time
 import unicodedata
 from urllib.parse import urlparse
@@ -400,18 +401,29 @@ def _query_match_score(item: dict, query: str, *, info=None, q_key: str | None =
     return score
 
 
+# Schéma initialisé une seule fois par chemin de base : les connexions
+# suivantes ne rejouent plus le DDL (verrous exclusifs) sur le chemin chaud.
+# Sans cela, le collecteur (écritures continues) faisait échouer les lectures
+# web en « database is locked » sur Render (V3.8 prod).
+_SCHEMA_READY_PATHS: set[str] = set()
+_SCHEMA_READY_LOCK = threading.Lock()
+
+
 @contextmanager
 def _connect(path: Path | None = None):
     db_path = (path or default_db_path()).resolve()
     db_path.parent.mkdir(parents=True, exist_ok=True)
-    conn = sqlite3.connect(str(db_path), timeout=4.0)
+    conn = sqlite3.connect(str(db_path), timeout=8.0)
     conn.row_factory = sqlite3.Row
     try:
-        conn.execute("PRAGMA journal_mode=WAL")
         conn.execute("PRAGMA synchronous=NORMAL")
-        conn.execute("PRAGMA busy_timeout=4000")
+        conn.execute("PRAGMA busy_timeout=8000")
         conn.execute("PRAGMA foreign_keys=ON")
-        _ensure_schema(conn)
+        with _SCHEMA_READY_LOCK:
+            if str(db_path) not in _SCHEMA_READY_PATHS:
+                conn.execute("PRAGMA journal_mode=WAL")
+                _ensure_schema(conn)
+                _SCHEMA_READY_PATHS.add(str(db_path))
         yield conn
         conn.commit()
     finally:
