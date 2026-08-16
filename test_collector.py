@@ -247,6 +247,57 @@ def test_status_never_blocks_on_db():
             engine.stop()
 
 
+def test_dead_walker_is_not_reported_running_from_stale_db():
+    """walker=True + thread mort doit rester running=False, même si la DB est fraîche."""
+    with _with_index_db() as db:
+        index_engine.record_collector_run(
+            seed_query="Nike P-6000", marketplace="eBay", page=1,
+            raw=5, parsed=5, relevant=5, new=5, path=db,
+        )
+        engine = collector.Collector(path=db)
+        engine._walker = True
+        engine._thread = None
+        status = engine.status()
+        assert status["thread_alive"] is False
+        assert status["walker"] is True
+        assert status["running"] is False
+
+
+def test_status_snapshot_uses_fast_read_path():
+    """Le status collector ne doit plus repasser par _connect(timeout=8s)."""
+    with _with_index_db() as db:
+        index_engine.record_collector_run(
+            seed_query="Nike P-6000", marketplace="eBay", page=1,
+            raw=10, parsed=10, relevant=8, rejected=2, new=8, duplicates=2,
+            has_more=True, blocked=False, latency_ms=120, path=db,
+        )
+        with patch.object(index_engine, "_connect", side_effect=AssertionError("slow path used")):
+            t0 = time.time()
+            snap = index_engine.collector_status_snapshot(path=db, timeout_ms=50)
+            elapsed = time.time() - t0
+        assert elapsed < 0.5, f"snapshot trop lent: {elapsed:.2f}s"
+        assert snap["db_available"] is True, snap
+        assert snap["stats"]["runs"] == 1 and snap["stats"]["new"] == 8
+        assert snap["recent_runs"][0]["marketplace"] == "eBay"
+
+
+def test_collector_status_contains_single_snapshot():
+    """Collector.status expose les stats sans collector_stats/recent/diag séparés."""
+    with _with_index_db() as db:
+        index_engine.record_collector_run(
+            seed_query="Stone Island", marketplace="Vinted", page=1,
+            raw=4, parsed=4, relevant=4, new=4, path=db,
+        )
+        engine = collector.Collector(path=db)
+        with patch.object(index_engine, "collector_stats", side_effect=AssertionError("duplicate stats")), \
+             patch.object(index_engine, "recent_collector_runs", side_effect=AssertionError("duplicate recent")), \
+             patch.object(index_engine, "collector_diag_read", side_effect=AssertionError("duplicate diag")):
+            status = engine.status()
+        assert status["stats"]["runs"] == 1
+        assert status["stats"]["new"] == 4
+        assert status["db_available"] is True
+
+
 def test_index_spillover():
     """Quand le token est épuisé mais que l'index contient d'autres offres,
     la pagination continue depuis l'index, dédupliquée contre le token."""
@@ -270,6 +321,43 @@ def test_index_spillover():
         assert spilled["total"] == 6
         assert spilled["has_more"] is False
         assert index_engine.count_query_offers("Nike P-6000", path=db)["exact"] == 6
+
+
+def test_missing_identity_is_treated_as_possible_in_confirmed_results():
+    """Compat index historique : une offre sans niveau_identite ne doit pas
+    apparaître dans /status puis disparaître de /api/results."""
+    from app_web import _sorted_results
+
+    legacy = _make_offer(700)
+    legacy.pop("niveau_identite", None)
+    visible = _sorted_results([legacy], identity="confirmed")
+    assert len(visible) == 1
+
+    rejected = dict(legacy, niveau_identite="rejet")
+    assert _sorted_results([rejected], identity="confirmed") == []
+
+
+def test_empty_token_recovers_new_async_index_results():
+    """Cold start : un index_total=0 ne doit pas figer la recherche à 0.
+
+    Les résultats live sont indexés en asynchrone ; ils peuvent donc apparaître
+    dans SQLite après la création du token. Le spillover doit relire l'index
+    courant quand le token est encore vide.
+    """
+    with _with_index_db() as db:
+        from app_web import _index_spillover
+        entry = {
+            "search_query": "Nike P-6000",
+            "search_price": None,
+            "index_total": 0,
+            "results": [],
+        }
+        offers = [_make_offer(i, marketplace="eBay") for i in range(1, 7)]
+        index_engine.upsert_results(offers, "Nike P-6000", path=db)
+        spilled = _index_spillover(entry, [], offset=0, limit=10)
+        assert spilled is not None, "le vieux index_total=0 masque les offres fraîchement indexées"
+        assert len(spilled["results"]) == 6, spilled
+        assert spilled["total"] == 6
 
 
 def test_reads_survive_collector_writes():

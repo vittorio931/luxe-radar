@@ -336,8 +336,42 @@ def build_query_profile(query):
     original = str(query or "").strip()
     qn = normalize(original)
     brand = _detect_brand(qn)
+
+    # V3.7.4 : le moteur historique de reconnaissance avait sa propre analyse
+    # de requête et ignorait l'inférence exacte ajoutée à SearchIntent. Ainsi
+    # ``Air Force 1`` était bien compris par l'index comme Nike/Air Force 1,
+    # mais les résultats live passaient encore ici sans marque/modèle et
+    # étaient rejetés avec un score faible. Réutiliser SearchIntent uniquement
+    # pour l'identité marque/modèle garde les deux chemins cohérents sans
+    # élargir les inférences aux termes génériques (Trail, polo, etc.).
+    inferred_intent = None
+    if not brand and original:
+        try:
+            from search_intent import parse_search_intent
+            inferred_intent = parse_search_intent(original)
+        except Exception:
+            inferred_intent = None
+        if (
+            inferred_intent is not None
+            and inferred_intent.brand
+            and inferred_intent.model
+            and not inferred_intent.is_reference
+        ):
+            brand = inferred_intent.brand
+
     brand_aliases = _brand_aliases(brand) if brand else ()
     model, model_aliases = _find_model_in_query(qn, brand)
+    if (
+        not model
+        and inferred_intent is not None
+        and inferred_intent.brand == brand
+        and inferred_intent.model
+    ):
+        model = inferred_intent.model
+        family = MARQUES_MODELES.get(brand, {}) if brand else {}
+        aliases = family.get(model, ()) if isinstance(family, dict) else ()
+        model_aliases = tuple(_dedupe([model, *(aliases or ())]))
+
     type_name = _detect_type(qn)
     type_aliases = tuple(_dedupe(TYPE_ALIASES.get(type_name, ()))) if type_name else ()
 

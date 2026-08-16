@@ -35,6 +35,8 @@ CREATE INDEX IF NOT EXISTS idx_search_sessions_owner
 """
 
 _LOCK = threading.Lock()
+_SCHEMA_LOCK = threading.Lock()
+_SCHEMA_READY_PATHS: set[str] = set()
 _DB_PATH = None
 _BUSY_TIMEOUT_MS = 4000
 
@@ -58,7 +60,6 @@ def _connect() -> sqlite3.Connection:
     path = _db_path()
     path.parent.mkdir(parents=True, exist_ok=True)
     connection = sqlite3.connect(str(path), timeout=_BUSY_TIMEOUT_MS / 1000.0)
-    connection.execute("PRAGMA journal_mode=WAL")
     connection.execute("PRAGMA busy_timeout=%d" % _BUSY_TIMEOUT_MS)
     connection.execute("PRAGMA synchronous=NORMAL")
     connection.row_factory = sqlite3.Row
@@ -66,11 +67,28 @@ def _connect() -> sqlite3.Connection:
 
 
 def _initialize():
-    connection = _connect()
-    try:
-        connection.executescript(_SCHEMA)
-    finally:
-        connection.close()
+    """Initialise le schéma une seule fois par chemin de DB dans ce process.
+
+    ``journal_mode=WAL`` et le DDL peuvent prendre un verrou exclusif SQLite.
+    Les rejouer à chaque lecture/écriture de session créait de la contention
+    avec les workers progressifs. Les connexions ordinaires restent ensuite
+    de simples lectures/écritures transactionnelles.
+    """
+    path = _db_path()
+    key = str(path)
+    if key in _SCHEMA_READY_PATHS:
+        return
+    with _SCHEMA_LOCK:
+        if key in _SCHEMA_READY_PATHS:
+            return
+        connection = _connect()
+        try:
+            connection.execute("PRAGMA journal_mode=WAL")
+            connection.executescript(_SCHEMA)
+            connection.commit()
+            _SCHEMA_READY_PATHS.add(key)
+        finally:
+            connection.close()
 
 
 def save_search_session(

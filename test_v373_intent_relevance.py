@@ -15,6 +15,7 @@ import tempfile
 import index_engine
 from relevance_gate import evaluate_offer
 from search_intent import parse_search_intent
+from product_recognition import build_query_profile, recognize_product
 
 
 def offer(titre, query, marketplace='eBay', i=0, price=120.0, level='fort'):
@@ -133,4 +134,46 @@ with tempfile.TemporaryDirectory() as tmp:
         seq_b = [str(r.get('lien')) for r in index_engine.search(q, path=d_b, limit=500).results]
         assert seq_a == seq_b, f'ordre non déterministe pour {q!r}'
 
-print('OK - V3.7.3 INTENT + PERTINENCE: gate 13 cas, sous-ensemble, faux +/- , références et déterminisme validés.')
+# Modèles connus recherchés sans marque : inférence exacte et non ambiguë.
+for raw, expected_brand, expected_model in (
+    ("Air Force 1", "Nike", "Air Force 1"),
+    ("Samba", "Adidas", "Samba"),
+    ("XT-6", "Salomon", "XT-6"),
+    ("P-6000", "Nike", "P-6000"),
+):
+    inferred = parse_search_intent(raw)
+    assert inferred.brand == expected_brand, (raw, inferred)
+    assert inferred.model == expected_model, (raw, inferred)
+    assert inferred.is_reference is False, (raw, inferred)
+
+# Ne pas transformer un type/gamme générique ou une vraie référence en modèle.
+assert parse_search_intent("polo").brand is None
+assert parse_search_intent("Trail").brand is None
+assert parse_search_intent("DM4652-040").is_reference is True
+
+# Le chemin live (radar_engine/product_recognition) doit partager la même
+# compréhension que SearchIntent. C'était la source du bug où ``Air Force 1``
+# était correctement compris dans le résumé de recherche mais rejeté à 38/100
+# par ASOS/Zalando/eBay/Courir.
+for raw, expected_brand, expected_model, good_title, bad_title in (
+    ("Air Force 1", "Nike", "Air Force 1", "Nike Air Force 1 '07 Sneakers", "Nike Air Zoom Victory 2"),
+    ("Samba", "Adidas", "Samba", "adidas Samba OG Shoes", "adidas Ultraboost Shoes"),
+    ("XT-6", "Salomon", "XT-6", "Salomon XT-6 Sneakers", "Salomon Speedcross 6"),
+    ("P-6000", "Nike", "P-6000", "Nike P-6000 Shoes", "Nike Air Force 1 Shoes"),
+):
+    profile = build_query_profile(raw)
+    assert (profile.brand, profile.model) == (expected_brand, expected_model), (raw, profile)
+    good = recognize_product(raw, good_title, marketplace="eBay")
+    assert good.accepted and good.level == "fort", (raw, good)
+    bad = recognize_product(raw, bad_title, marketplace="eBay")
+    assert not bad.accepted, (raw, bad)
+
+# Les termes génériques et vraies références ne doivent toujours pas être
+# transformés en marque/modèle par le moteur live.
+assert build_query_profile("Trail").brand is None
+assert build_query_profile("Trail").model is None
+assert build_query_profile("polo").brand is None
+assert build_query_profile("DM4652-040").brand is None
+assert build_query_profile("DM4652-040").model is None
+
+print('OK - V3.7.4 INTENT + PERTINENCE: gate 13 cas + modèles sans marque cohérents index/live, références et déterminisme validés.')

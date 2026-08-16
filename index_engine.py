@@ -922,6 +922,117 @@ def recent_collector_runs(limit: int = 8, *, path: Path | None = None) -> list[d
     ]
 
 
+def collector_status_snapshot(*, path: Path | None = None, recent_limit: int = 8,
+                              diag_limit: int = 12, timeout_ms: int = 150) -> dict:
+    """Snapshot lecture seule et fail-fast pour ``/api/collector/status``.
+
+    Le panneau de diagnostic ne doit jamais hériter du ``busy_timeout`` global
+    de 8 secondes. On ouvre une seule connexion sans DDL/WAL et on regroupe
+    stats + dernières passes + diagnostics. En cas de contention, l'appel rend
+    immédiatement un état partiel au lieu de bloquer un thread web.
+    """
+    stats = {
+        "seed_query": None, "marketplace": None,
+        "runs": 0, "pages": 0, "raw": 0, "parsed": 0, "relevant": 0,
+        "rejected": 0, "new": 0, "duplicates": 0, "blocked_pages": 0,
+        "has_more_pages": 0, "last_run_at": None, "sources": {},
+    }
+    snapshot = {
+        "db_available": False,
+        "error": None,
+        "stats": stats,
+        "recent_runs": [],
+        "diag": [],
+    }
+    if not index_enabled():
+        snapshot["db_available"] = True
+        return snapshot
+
+    db_path = (path or default_db_path()).resolve()
+    if not db_path.exists():
+        snapshot["error"] = "index not initialized"
+        return snapshot
+
+    recent_limit = max(1, min(int(recent_limit or 8), 20))
+    diag_limit = max(1, min(int(diag_limit or 12), 30))
+    timeout_ms = max(10, min(int(timeout_ms or 150), 1000))
+    conn = None
+    try:
+        conn = sqlite3.connect(str(db_path), timeout=timeout_ms / 1000.0)
+        conn.row_factory = sqlite3.Row
+        conn.execute(f"PRAGMA busy_timeout={timeout_ms}")
+        conn.execute("PRAGMA query_only=ON")
+
+        row = conn.execute(
+            "SELECT COUNT(*) AS runs, COALESCE(SUM(raw),0) AS raw, "
+            "COALESCE(SUM(parsed),0) AS parsed, COALESCE(SUM(relevant),0) AS relevant, "
+            "COALESCE(SUM(rejected),0) AS rejected, COALESCE(SUM(new),0) AS new, "
+            "COALESCE(SUM(duplicates),0) AS duplicates, COALESCE(SUM(blocked),0) AS blocked, "
+            "COALESCE(SUM(has_more),0) AS has_more, MAX(walked_at) AS last_run_at "
+            "FROM collector_runs"
+        ).fetchone()
+        stats.update({
+            "runs": int(row["runs"] or 0),
+            "pages": int(row["runs"] or 0),
+            "raw": int(row["raw"] or 0),
+            "parsed": int(row["parsed"] or 0),
+            "relevant": int(row["relevant"] or 0),
+            "rejected": int(row["rejected"] or 0),
+            "new": int(row["new"] or 0),
+            "duplicates": int(row["duplicates"] or 0),
+            "blocked_pages": int(row["blocked"] or 0),
+            "has_more_pages": int(row["has_more"] or 0),
+            "last_run_at": row["last_run_at"],
+        })
+        per_source = conn.execute(
+            "SELECT marketplace, COUNT(*) AS runs, COALESCE(SUM(raw),0) AS raw, "
+            "COALESCE(SUM(parsed),0) AS parsed, COALESCE(SUM(relevant),0) AS relevant, "
+            "COALESCE(SUM(rejected),0) AS rejected, COALESCE(SUM(new),0) AS new, "
+            "COALESCE(SUM(duplicates),0) AS duplicates, COALESCE(SUM(blocked),0) AS blocked, "
+            "COALESCE(SUM(has_more),0) AS has_more, MAX(walked_at) AS last_run_at "
+            "FROM collector_runs GROUP BY marketplace ORDER BY new DESC"
+        ).fetchall()
+        stats["sources"] = {r["marketplace"]: dict(r) for r in per_source}
+
+        rows = conn.execute(
+            "SELECT seed_query, marketplace, page, raw, parsed, relevant, rejected, "
+            "new, duplicates, has_more, blocked, latency_ms, walked_at "
+            "FROM collector_runs ORDER BY walked_at DESC, rowid DESC LIMIT ?",
+            (recent_limit,),
+        ).fetchall()
+        snapshot["recent_runs"] = [
+            {
+                "query": str(r["seed_query"] or ""),
+                "marketplace": str(r["marketplace"] or ""),
+                "page": int(r["page"] or 1),
+                "new": int(r["new"] or 0),
+                "raw": int(r["raw"] or 0),
+                "relevant": int(r["relevant"] or 0),
+                "rejected": int(r["rejected"] or 0),
+                "duplicates": int(r["duplicates"] or 0),
+                "blocked": bool(r["blocked"]),
+                "latency_ms": int(r["latency_ms"] or 0),
+                "walked_at": r["walked_at"],
+            }
+            for r in rows
+        ]
+        diag_rows = conn.execute(
+            "SELECT ts, message FROM collector_diag ORDER BY id DESC LIMIT ?",
+            (diag_limit,),
+        ).fetchall()
+        snapshot["diag"] = [
+            {"ts": float(r["ts"]), "message": str(r["message"])}
+            for r in diag_rows
+        ]
+        snapshot["db_available"] = True
+    except sqlite3.Error as exc:
+        snapshot["error"] = str(exc)[:160]
+    finally:
+        if conn is not None:
+            conn.close()
+    return snapshot
+
+
 def collector_diag_write(message: str, *, path: Path | None = None) -> bool:
     """Trace diagnostique partagée entre process (boot walker, sortie thread)."""
     if not index_enabled():

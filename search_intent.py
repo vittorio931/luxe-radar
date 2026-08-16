@@ -188,6 +188,60 @@ def _find_canonical(alias_map: dict[str, tuple[str, ...]], text_folded: str):
     return best, best_alias
 
 
+def _infer_unique_model_brand(text_folded: str):
+    """Infère (marque, modèle) quand un modèle connu suffit à lui seul.
+
+    Exemples : ``Air Force 1`` -> Nike / Air Force 1, ``Samba`` -> Adidas /
+    Samba. L'inférence reste volontairement conservatrice :
+    - uniquement des alias exacts présents dans MARQUES_MODELES ;
+    - aucune inférence pour les types génériques (polo, short, t-shirt...) ;
+    - aucune inférence pour les gammes (Trail, Miler...) ;
+    - si le même alias appartient à plusieurs couples marque/modèle, on ne
+      choisit rien.
+    """
+    if not text_folded:
+        return None, None
+
+    generic_aliases = {
+        _fold(alias)
+        for aliases in TYPE_ALIASES.values()
+        for alias in aliases
+        if alias
+    }
+    generic_aliases.update(
+        _fold(alias)
+        for aliases in LINE_ALIASES.values()
+        for alias in aliases
+        if alias
+    )
+
+    matches = []
+    for brand, models in MARQUES_MODELES.items():
+        if not isinstance(models, dict):
+            continue
+        for model, aliases in models.items():
+            if model in _LINE_MODEL_KEYS or model.casefold() in LINE_ALIASES:
+                continue
+            for alias in (model, *(aliases or ())):
+                alias_folded = _fold(alias)
+                if not alias_folded or alias_folded in generic_aliases:
+                    continue
+                alias_alnum = _norm_alnum(alias_folded)
+                min_length = 3 if any(ch.isdigit() for ch in alias_alnum) else 4
+                if len(alias_alnum) < min_length:
+                    continue
+                if _contains_word(text_folded, alias_folded):
+                    matches.append((len(alias_folded), str(brand), str(model), alias_folded))
+
+    if not matches:
+        return None, None
+    longest = max(length for length, _brand, _model, _alias in matches)
+    winners = {(brand, model) for length, brand, model, _alias in matches if length == longest}
+    if len(winners) != 1:
+        return None, None
+    return next(iter(winners))
+
+
 def parse_search_intent(query: str) -> SearchIntent:
     """Parse une requête libre en intent structurée et déterministe."""
     query = str(query or "").strip()
@@ -197,8 +251,15 @@ def parse_search_intent(query: str) -> SearchIntent:
     canonical = canonicalize_search_query(query) if canonicalize_search_query else query
     query_folded = _fold(query)
 
-    # Référence produit pure (ex. ``DM4652-040``) : pas de marque à exiger.
-    is_reference = bool(re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._/-]{3,}", query.strip()) and re.search(r"\d", query))
+    # Un modèle exact connu peut lui-même ressembler à une référence (``XT-6``,
+    # ``P-6000``). On tente donc l'inférence catalogue AVANT le fallback
+    # « référence produit pure ».
+    inferred_brand, inferred_model = _infer_unique_model_brand(query_folded)
+    is_reference = bool(
+        not inferred_model
+        and re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._/-]{3,}", query.strip())
+        and re.search(r"\d", query)
+    )
 
     info = None
     try:
@@ -208,6 +269,13 @@ def parse_search_intent(query: str) -> SearchIntent:
 
     brand = str(getattr(info, "brand", "") or "").strip() or None
     model = str(getattr(info, "model", "") or "").strip() or None
+
+    # Une requête peut contenir un modèle mondialement identifiable sans sa
+    # marque (``Air Force 1``, ``Samba``, ``XT-6``...). ``understand_query``
+    # exige volontairement une marque pour son fuzzy ; ici on ajoute seulement
+    # une inférence exacte et non ambiguë depuis le catalogue de modèles.
+    if not brand and not is_reference and inferred_brand and inferred_model:
+        brand, model = inferred_brand, inferred_model
 
     # Gamme ou modèle exact ? ``Nike Trail`` = gamme (admets Pegasus Trail 5) ;
     # ``Nike P-6000`` = modèle exact (rejette Air Force 1).

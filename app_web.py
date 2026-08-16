@@ -8,7 +8,7 @@ import secrets
 import time
 import unicodedata
 import hashlib
-from threading import Lock, Semaphore
+from threading import Event, Lock, Semaphore
 from time import monotonic, perf_counter
 from uuid import uuid4
 from urllib.parse import urlparse
@@ -704,9 +704,10 @@ def index_status():
 def collector_status():
     """Panneau de statut du collecteur profond (queue, passes récentes)."""
     try:
-        status = _collector.status()
-        status["stats"] = index_engine.collector_stats()
-        return jsonify(status)
+        # Collector.status() inclut déjà un snapshot DB fail-fast. Ne pas
+        # refaire collector_stats() ici : cette duplication pouvait bloquer
+        # plusieurs secondes sous contention SQLite.
+        return jsonify(_collector.status())
     except Exception as exc:  # pragma: no cover - défensif
         return jsonify({"enabled": collector.COLLECTOR_ENABLED, "error": str(exc)[:200]})
 
@@ -924,9 +925,11 @@ def _apply_restored_state(token, restored):
 
 
 # Verrou anti-double-restauration : si deux requêtes concurrentes découvrent le
-# même token manquant, une seule reconstruit le cache, l'autre attend la RAM.
+# même token manquant, une seule reconstruit le cache. Les autres attendent
+# brièvement la fin de cette restauration au lieu de renvoyer un faux 404.
 _restore_lock = Lock()
-_restore_in_progress = {}
+_restore_in_progress: dict[str, Event] = {}
+_RESTORE_WAIT_SECONDS = 2.5
 
 
 def _restore_search_session(token, owner, active_marketplaces):
@@ -939,15 +942,30 @@ def _restore_search_session(token, owner, active_marketplaces):
     owner = str(owner or "")
     if not owner or not token:
         return None
+    wait_event = None
+    restore_event = None
     with _restore_lock:
-        if _restore_in_progress.get(token):
-            return None
+        wait_event = _restore_in_progress.get(token)
+        if wait_event is None:
+            with _cache_lock:
+                _clean_cache()
+                existing = _search_cache.get(token)
+                if existing is not None and secrets.compare_digest(str(existing.get("owner") or ""), owner):
+                    return existing
+            restore_event = Event()
+            _restore_in_progress[token] = restore_event
+
+    # Une autre requête restaure déjà ce token. Attendre hors du verrou global
+    # évite la course status/expand observée après un restart Gunicorn.
+    if wait_event is not None:
+        wait_event.wait(_RESTORE_WAIT_SECONDS)
         with _cache_lock:
             _clean_cache()
             existing = _search_cache.get(token)
             if existing is not None and secrets.compare_digest(str(existing.get("owner") or ""), owner):
                 return existing
-        _restore_in_progress[token] = True
+        return None
+
     try:
         try:
             record = search_sessions.load_search_session(token)
@@ -1023,7 +1041,9 @@ def _restore_search_session(token, owner, active_marketplaces):
             return _search_cache.get(token)
     finally:
         with _restore_lock:
-            _restore_in_progress.pop(token, None)
+            done_event = _restore_in_progress.pop(token, None)
+            if done_event is not None:
+                done_event.set()
 
 
 def _ensure_search_session(token, owner, active_marketplaces):
@@ -1524,7 +1544,12 @@ def _sorted_results(results, sort="relevance", marketplace="Toutes", price_min=N
     elif risk == "low_only":
         filtered = [item for item in filtered if item.get("risque_contrefacon") == "faible"]
     if identity == "confirmed":
-        filtered = [item for item in filtered if str(item.get("niveau_identite") or "") in {"fort", "possible"}]
+        # Les anciennes offres indexées peuvent ne pas avoir encore le champ
+        # ``niveau_identite``. Partout ailleurs dans le moteur, l'absence de ce
+        # champ est traitée comme ``possible`` (jamais comme ``fort``). Garder
+        # la même convention ici évite un état incohérent où /status annonce
+        # des résultats mais /api/results renvoie une page vide.
+        filtered = [item for item in filtered if str(item.get("niveau_identite") or "possible") in {"fort", "possible"}]
     elif identity == "strong":
         filtered = [item for item in filtered if str(item.get("niveau_identite") or "") == "fort"]
     elif identity == "unverified":
@@ -1623,8 +1648,12 @@ def _index_spillover(entry, token_results, offset, limit, *, sort="relevance", m
         query = str(entry.get("search_query") or "").strip()
         if not query or not index_engine.index_enabled():
             return None
-        index_total = int(entry.get("index_total") or 0)
-        if index_total <= len(token_results or []):
+        # ``index_total`` est un snapshot pris au démarrage de la recherche.
+        # Sur un cold start il peut valoir 0, puis l'index async reçoit de vraies
+        # offres quelques secondes plus tard. Quand le token est encore vide, ne
+        # jamais utiliser ce vieux 0 pour masquer ces offres fraîchement indexées.
+        cached_index_total = int(entry.get("index_total") or 0)
+        if token_results and cached_index_total <= len(token_results or []):
             return None
         index_offset = max(0, offset - len(token_results or []))
         indexed = index_engine.search(
@@ -1665,6 +1694,9 @@ def _index_spillover(entry, token_results, offset, limit, *, sort="relevance", m
 def _result_page(token, offset, limit=RESULT_BATCH_SIZE, sort="relevance", marketplace="Toutes", price_min=None, price_max=None, price_exact=None, price_tolerance=None, exclude="", risk="all", identity="confirmed", owner=None):
     offset = max(0, int(offset))
     limit = max(1, min(int(limit), MAX_BATCH_SIZE))
+    # Copier uniquement l'état nécessaire sous le verrou RAM. Le fallback index
+    # peut toucher SQLite et ne doit jamais empêcher un worker progressif de
+    # fusionner ses premiers résultats dans le token.
     with _cache_lock:
         _clean_cache()
         entry = _search_cache.get(token)
@@ -1673,32 +1705,39 @@ def _result_page(token, offset, limit=RESULT_BATCH_SIZE, sort="relevance", marke
         expected_owner = str(entry.get("owner") or "")
         if expected_owner and not secrets.compare_digest(expected_owner, str(owner or "")):
             return None
-        results = _sorted_results(entry["results"], sort=sort, marketplace=marketplace, price_min=price_min, price_max=price_max, price_exact=price_exact, price_tolerance=price_tolerance, exclude=exclude, risk=risk, identity=identity)
-        per_page = max(1, int(limit))
-        page = [_public_result(item) for item in results[offset:offset + limit]]
-        next_offset = offset + len(page)
-        total = len(results)
-        has_more = next_offset < total
-        if not has_more:
-            spilled = _index_spillover(
-                entry, results, offset, per_page, sort=sort, marketplace=marketplace,
-                price_min=price_min, price_max=price_max, price_exact=price_exact,
-                price_tolerance=price_tolerance, exclude=exclude, risk=risk, identity=identity,
-            )
-            if spilled is not None:
-                page = spilled["results"]
-                next_offset = offset + len(page)
-                total = spilled["total"]
-                has_more = spilled["has_more"]
-        return {
-            "results": page,
-            "next_offset": next_offset,
-            "has_more": has_more,
-            "total": total,
-            "page": (offset // per_page) + 1,
-            "total_pages": max(1, (total + per_page - 1) // per_page),
-            "per_page": per_page,
+        entry_snapshot = {
+            "search_query": entry.get("search_query"),
+            "search_price": entry.get("search_price"),
+            "index_total": entry.get("index_total"),
         }
+        raw_results = [dict(item) for item in entry.get("results") or []]
+
+    results = _sorted_results(raw_results, sort=sort, marketplace=marketplace, price_min=price_min, price_max=price_max, price_exact=price_exact, price_tolerance=price_tolerance, exclude=exclude, risk=risk, identity=identity)
+    per_page = max(1, int(limit))
+    page = [_public_result(item) for item in results[offset:offset + limit]]
+    next_offset = offset + len(page)
+    total = len(results)
+    has_more = next_offset < total
+    if not has_more:
+        spilled = _index_spillover(
+            entry_snapshot, results, offset, per_page, sort=sort, marketplace=marketplace,
+            price_min=price_min, price_max=price_max, price_exact=price_exact,
+            price_tolerance=price_tolerance, exclude=exclude, risk=risk, identity=identity,
+        )
+        if spilled is not None:
+            page = spilled["results"]
+            next_offset = offset + len(page)
+            total = spilled["total"]
+            has_more = spilled["has_more"]
+    return {
+        "results": page,
+        "next_offset": next_offset,
+        "has_more": has_more,
+        "total": total,
+        "page": (offset // per_page) + 1,
+        "total_pages": max(1, (total + per_page - 1) // per_page),
+        "per_page": per_page,
+    }
 
 
 @app.get("/api/results/<token>/status")
@@ -1883,8 +1922,19 @@ def _expand_search_once(token, owner, marketplace="Toutes"):
         round_index = int(entry.get("expansion_round", 0))
         discovery_has_more = bool(entry.get("discovery_has_more", True))
         initial_pipeline_pending = bool(entry.get("pending_sources") or [])
+        existing_count = len(entry.get("results") or [])
 
         requested = str(marketplace or "Toutes")
+        # Une page initiale totalement vide ne doit pas déclencher une page 2
+        # en parallèle de la page 1 simplement parce que le sentinel est déjà
+        # visible. On laisse d'abord le pipeline progressif livrer sa première
+        # offre ; le navigateur retentera ensuite automatiquement.
+        if requested == "Toutes" and initial_pipeline_pending and existing_count == 0:
+            return {
+                "accepted": True, "busy": True, "added": 0,
+                "exhausted": False, "source": "sources en cours",
+                "retry_after_ms": 1500,
+            }, 202
         target = None
         if requested != "Toutes":
             if requested in EXPAND_ALL_SOURCES and requested not in exhausted:
@@ -1924,7 +1974,6 @@ def _expand_search_once(token, owner, marketplace="Toutes"):
 
         entry["expansion_inflight"] = True
         entry["expansion_round"] = round_index
-        existing_count = len(entry.get("results") or [])
         page_state = dict(entry.get("page_state") or {})
         page_empty = dict(entry.get("page_empty") or {})
         recall_limit = dict(entry.get("recall_limit") or EXPAND_RECALL_INITIAL_LIMITS)
@@ -2049,8 +2098,11 @@ def _expand_search_once(token, owner, marketplace="Toutes"):
             all(source in exhausted for source in EXPAND_ALL_SOURCES)
             and not bool(entry.get("discovery_has_more", True))
         )
-        _persist_search_session(entry, token, owner)
-        return {
+        # Snapshotter sous le verrou, mais persister hors du verrou RAM :
+        # SQLite peut attendre sous contention et ne doit jamais bloquer
+        # /status ni /api/results pendant ce temps.
+        persist_snapshot = dict(entry)
+        response_payload = {
             "accepted": True,
             "busy": False,
             "source": "catalogue" if target == "__catalog__" else target,
@@ -2061,7 +2113,9 @@ def _expand_search_once(token, owner, marketplace="Toutes"):
             "catalog_scanned": int(entry.get("catalog_scanned", 0)),
             "exhausted": bool(entry.get("expansion_exhausted")),
             "error": error,
-        }, 200
+        }
+    _persist_search_session(persist_snapshot, token, owner)
+    return response_payload, 200
 
 
 @app.post("/api/results/<token>/expand")

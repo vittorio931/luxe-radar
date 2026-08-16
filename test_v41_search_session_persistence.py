@@ -12,6 +12,7 @@ Scénarios hors-ligne (recherche simulée, un seul worker eBay) :
 import os
 import sqlite3
 import tempfile
+import threading
 import time
 
 from unittest.mock import patch
@@ -27,6 +28,8 @@ import app_web  # noqa: E402
 from app_web import (  # noqa: E402
     CACHE_TTL_SECONDS,
     SEARCH_SESSION_TTL_SECONDS,
+    _cache_results,
+    _ensure_search_session,
     _progressive_owner_tokens,
     _search_cache,
     app,
@@ -101,6 +104,23 @@ def main():
     client = app.test_client()
     csrf = _boot(client)
 
+    # Page initiale vide : le scroll profond doit attendre la fin de la page 1
+    # au lieu de lancer eBay page 2 en parallèle du pipeline initial.
+    guard_token = _cache_results(
+        [], csrf, pending_sources=["eBay"], search_query="Nike P-6000",
+        search_price=250, selected_platform="Toutes",
+    )
+    guard = client.post(
+        f"/api/results/{guard_token}/expand?marketplace=Toutes",
+        headers={"X-CSRF-Token": csrf},
+    )
+    assert guard.status_code == 202, guard.get_data(as_text=True)[:300]
+    assert guard.get_json()["busy"] is True and guard.get_json()["added"] == 0
+    search_sessions.delete_search_session(guard_token)
+    with app_web._cache_lock:
+        _search_cache.pop(guard_token, None)
+    _progressive_owner_tokens.pop(csrf, None)
+
     with patch(
         "app_web.rechercher_multi_marketplaces", side_effect=fake_search,
     ) as mocked, patch(
@@ -157,6 +177,30 @@ def main():
         alive = client.get(f"/api/results/{token}/status")
         assert alive.status_code == 200, "session encore valide perdue lors de l'éviction RAM"
         assert search_sessions.load_search_session(token) is not None
+
+        # --- 3c. deux requêtes concurrentes attendent le même restore -------
+        _simulate_restart()
+        real_load = search_sessions.load_search_session
+        gate = threading.Barrier(2)
+        restored = []
+
+        def restore_worker():
+            gate.wait(timeout=2)
+            restored.append(_ensure_search_session(token, csrf, ["eBay"]))
+
+        def slow_load(value):
+            time.sleep(0.15)
+            return real_load(value)
+
+        with patch.object(search_sessions, "load_search_session", side_effect=slow_load):
+            threads = [threading.Thread(target=restore_worker) for _ in range(2)]
+            for thread in threads:
+                thread.start()
+            for thread in threads:
+                thread.join(timeout=3)
+            assert all(not thread.is_alive() for thread in threads), "restore concurrent bloqué"
+        assert len(restored) == 2 and all(item is not None for item in restored), \
+            "une requête concurrente a reçu un faux 404 pendant le restore"
 
         # --- 4. autre propriétaire -> 404 ----------------------------------
         other = app.test_client()

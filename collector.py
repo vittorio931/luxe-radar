@@ -568,25 +568,34 @@ class Collector:
             recent = list(self._recent_runs)
             in_flight = self._in_flight
             thread_alive = self._thread is not None and self._thread.is_alive()
+
+        # Un seul snapshot SQLite lecture seule, borné à ~150 ms. Le panneau
+        # de diagnostic ne doit jamais consommer les 8 s du busy_timeout global.
+        try:
+            snapshot = index_engine.collector_status_snapshot(path=self._path)
+        except Exception as exc:  # noqa: BLE001 - jamais bloquer /status
+            snapshot = {
+                "db_available": False, "error": str(exc)[:160],
+                "stats": {"last_run_at": None, "runs": 0, "new": 0, "sources": {}},
+                "recent_runs": [], "diag": [],
+            }
+        stats = snapshot.get("stats") or {"last_run_at": None}
         if thread_alive:
             running = True
-            recent_out = recent[-8:]
-        else:
-            # Multi-workers : le process qui sert la requête n'est pas forcément
-            # celui qui marche. On lit la fraîcheur et les dernières passes
-            # depuis la base partagée pour un statut sincère.
-            try:
-                stats = index_engine.collector_stats(path=self._path)
-            except Exception:  # noqa: BLE001 - le statut ne doit jamais crasher
-                stats = {"last_run_at": None}
+            recent_out = recent[-8:] or list(snapshot.get("recent_runs") or [])[-8:]
+        elif self._walker is False:
+            # Observateur multi-process : il n'a pas de thread local, mais peut
+            # déclarer le walker distant actif si la DB partagée est fraîche.
             last = stats.get("last_run_at")
             window = COLLECTOR_IDLE_SECONDS + 4 * COLLECTOR_SLEEP_SECONDS + 5.0
             running = bool(last and (time() - float(last)) < window)
-            try:
-                recent_out = index_engine.recent_collector_runs(8, path=self._path)
-            except Exception:  # noqa: BLE001
-                recent_out = []
-        diag = index_engine.collector_diag_read(12, path=self._path)
+            recent_out = list(snapshot.get("recent_runs") or [])[-8:]
+        else:
+            # Ce process est le walker (ou n'a jamais été démarré) : un thread
+            # local mort doit rester running=False. Ne pas masquer sa mort avec
+            # une ancienne passe encore fraîche en SQLite.
+            running = False
+            recent_out = list(snapshot.get("recent_runs") or [])[-8:]
         return {
             "enabled": COLLECTOR_ENABLED,
             "pid": os.getpid(),
@@ -596,8 +605,11 @@ class Collector:
             "busy": in_flight is not None,
             "in_flight": {"query": in_flight[0], "price_max": in_flight[1]} if in_flight else None,
             "queue": queue,
-            "recent_runs": recent_out[-8:],
-            "diag": diag,
+            "recent_runs": recent_out,
+            "diag": list(snapshot.get("diag") or []),
+            "stats": stats,
+            "db_available": bool(snapshot.get("db_available")),
+            "db_error": snapshot.get("error"),
             "freshness_seconds": COLLECTOR_FRESHNESS_SECONDS,
         }
 
