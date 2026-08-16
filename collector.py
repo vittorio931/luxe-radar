@@ -481,14 +481,34 @@ class Collector:
             queue = [{"query": q, "price_max": p} for q, p in self._queue]
             recent = list(self._recent_runs)
             in_flight = self._in_flight
+            thread_alive = self._thread is not None and self._thread.is_alive()
+        if thread_alive:
+            running = True
+            recent_out = recent[-8:]
+        else:
+            # Multi-workers : le process qui sert la requête n'est pas forcément
+            # celui qui marche. On lit la fraîcheur et les dernières passes
+            # depuis la base partagée pour un statut sincère.
+            try:
+                stats = index_engine.collector_stats(path=self._path)
+            except Exception:  # noqa: BLE001 - le statut ne doit jamais crasher
+                stats = {"last_run_at": None}
+            last = stats.get("last_run_at")
+            window = COLLECTOR_IDLE_SECONDS + 4 * COLLECTOR_SLEEP_SECONDS + 5.0
+            running = bool(last and (time() - float(last)) < window)
+            try:
+                recent_out = index_engine.recent_collector_runs(8, path=self._path)
+            except Exception:  # noqa: BLE001
+                recent_out = []
         return {
             "enabled": COLLECTOR_ENABLED,
             "pid": os.getpid(),
-            "running": bool(self._thread is not None and self._thread.is_alive()),
+            "thread_alive": bool(thread_alive),
+            "running": bool(running),
             "busy": in_flight is not None,
             "in_flight": {"query": in_flight[0], "price_max": in_flight[1]} if in_flight else None,
             "queue": queue,
-            "recent_runs": recent[-8:],
+            "recent_runs": recent_out[-8:],
             "freshness_seconds": COLLECTOR_FRESHNESS_SECONDS,
         }
 

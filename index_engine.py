@@ -859,6 +859,41 @@ def collector_has_recent(seed_query, max_age_seconds: int = 24 * 60 * 60, *, pat
         return bool(row and row["n"] > 0)
 
 
+def recent_collector_runs(limit: int = 8, *, path: Path | None = None) -> list[dict]:
+    """Dernières passes source/page enregistrées (partagées entre process).
+
+    Permet au panneau de statut d'être sincère même quand le process qui sert
+    la requête n'est pas celui qui marche (multi-workers) : les runs sont lues
+    directement depuis la table partagée.
+    """
+    if not index_enabled():
+        return []
+    limit = max(1, min(int(limit or 8), 20))
+    with _connect(path) as conn:
+        rows = conn.execute(
+            "SELECT seed_query, marketplace, page, raw, parsed, relevant, rejected, "
+            "new, duplicates, has_more, blocked, latency_ms, walked_at "
+            "FROM collector_runs ORDER BY walked_at DESC, rowid DESC LIMIT ?",
+            (limit,),
+        ).fetchall()
+    return [
+        {
+            "query": str(r["seed_query"] or ""),
+            "marketplace": str(r["marketplace"] or ""),
+            "page": int(r["page"] or 1),
+            "new": int(r["new"] or 0),
+            "raw": int(r["raw"] or 0),
+            "relevant": int(r["relevant"] or 0),
+            "rejected": int(r["rejected"] or 0),
+            "duplicates": int(r["duplicates"] or 0),
+            "blocked": bool(r["blocked"]),
+            "latency_ms": int(r["latency_ms"] or 0),
+            "walked_at": r["walked_at"],
+        }
+        for r in rows
+    ]
+
+
 def count_query_offers(query, *, path: Path | None = None) -> dict:
     """Offres indexées pour une requête : table exacte, catalogue, total.
 

@@ -345,6 +345,29 @@ def test_collector_survives_transient_db_errors():
                 engine.stop()
 
 
+def test_recent_runs_shared_via_db():
+    """Multi-workers : les passes écrites par n'importe quel process sont
+    visibles depuis un autre via la table partagée."""
+    with _with_index_db() as db:
+        index_engine.record_collector_run(
+            seed_query="Nike P-6000", marketplace="eBay", page=1,
+            raw=10, parsed=10, relevant=8, rejected=2, new=8, duplicates=2,
+            has_more=True, blocked=False, latency_ms=900, path=db,
+        )
+        index_engine.record_collector_run(
+            seed_query="Stone Island", marketplace="Vinted", page=1,
+            raw=5, parsed=5, relevant=5, rejected=0, new=5, duplicates=0,
+            has_more=False, blocked=False, latency_ms=120, path=db,
+        )
+        runs = index_engine.recent_collector_runs(8, path=db)
+        assert len(runs) == 2
+        assert {r["query"] for r in runs} == {"Nike P-6000", "Stone Island"}
+        assert {r["marketplace"] for r in runs} == {"eBay", "Vinted"}
+        ebay = next(r for r in runs if r["marketplace"] == "eBay")
+        assert ebay["new"] == 8 and ebay["relevant"] == 8 and ebay["latency_ms"] == 900
+        assert runs == sorted(runs, key=lambda r: r["walked_at"], reverse=True)
+
+
 def _main():
     import sys
     tests = [value for key, value in sorted(globals().items()) if key.startswith("test_") and callable(value)]
