@@ -184,12 +184,9 @@ def evaluate_result(item, query="", marketplace=""):
     if _explicit_model_anchor_mismatch(query, title):
         return False, "variante de modèle incompatible"
 
-    # V2.8.11 : en couverture maximale, on conserve le reste des vraies cartes
-    # et l'interface décide ensuite du niveau de pertinence à afficher.
-    if _recall_mode_enabled():
-        return True, None
-
-    # Nike Trail != Portland Trail Blazers.
+    # Nike Trail != Portland Trail Blazers. Ce garde-fou est volontairement
+    # placé AVANT le mode recall : même en couverture maximale, on ne réadmet
+    # jamais un faux positif Portland Trail Blazers pour une requête Trail.
     q_tokens = set(re.findall(r"[a-z0-9]+", q))
     if "trail" in q_tokens and "blazers" not in q_tokens:
         if "trail blazers" in t or ("trail" in t and "portland" in t and "blazers" in t):
@@ -211,6 +208,11 @@ def evaluate_result(item, query="", marketplace=""):
     tokens = t.split()
     if not allow_bundle and len(tokens) >= 10 and len(brands) >= 4:
         return False, f"titre SEO multi-marques ({len(brands)} marques)"
+
+    # V2.8.11 : en couverture maximale, on conserve le reste des vraies cartes
+    # et l'interface décide ensuite du niveau de pertinence à afficher.
+    if _recall_mode_enabled():
+        return True, None
 
     return True, None
 

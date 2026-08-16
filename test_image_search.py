@@ -29,6 +29,7 @@ def main():
         csrf = browser_session["csrf_token"]
     token = app_web._cache_results([{
         "marketplace": "Test", "titre": "Image rouge", "prix": 10,
+        "niveau_identite": "possible",
         "image": "https://example.test/red.png",
     }], csrf)
     original_download = app_web.download_listing_image

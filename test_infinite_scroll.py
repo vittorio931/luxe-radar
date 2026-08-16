@@ -1,14 +1,32 @@
+import re
+import time
 from pathlib import Path
 from unittest.mock import patch
 
 import app_web
-from app_web import RESULT_BATCH_SIZE, _cache_results, _normalized_reference, _rank_by_reference, _safe_number, app
+import index_engine
+from app_web import RESULT_BATCH_SIZE, SUBSCRIPTION_PLANS, _cache_results, _normalized_reference, _rank_by_reference, _safe_number, app
 from marketplaces.catalog import _normalized_site, get_sites
 from marketplaces.connectors import get_available_connectors
 from radar_engine import _cle_unique_multi, _selection_diversifiee
 
 
 ROOT = Path(__file__).resolve().parent
+
+
+def _search_token_from(html):
+    match = re.search(r'"token":\s*"([0-9a-f]{32})"', html)
+    return match.group(1) if match else None
+
+
+def _await_search(client, token, timeout=15.0):
+    deadline = time.time() + timeout
+    while time.time() < deadline:
+        status = client.get(f"/api/results/{token}/status").get_json()
+        if not status.get("pending"):
+            return client.get(f"/api/results/{token}?offset=0&limit=200").get_json()["results"]
+        time.sleep(0.05)
+    raise AssertionError(f"recherche progressive non terminée en {timeout:g}s: {status}")
 
 
 def sample_results(count=170):
@@ -18,6 +36,7 @@ def sample_results(count=170):
             "marketplace": marketplaces[i], "titre": f"Annonce {i}",
             "prix": (i % 80) + 1, "score": 100 - (i / 2),
             "score_confiance": 50 + (i % 45), "categorie": "BONNE AFFAIRE",
+            "niveau_identite": "possible",
             "lien": f"https://example.com/{i}",
         }
         for i in range(count)
@@ -38,15 +57,24 @@ def main():
     with strict_client.session_transaction() as strict_session:
         strict_csrf = strict_session["csrf_token"]
     mocked_results = [
-        {"marketplace": "eBay", "titre": "Nike sans référence", "prix": 20, "score": 95, "score_confiance": 90, "lien": "https://example.com/no"},
-        {"marketplace": "eBay", "titre": "Nike DM4652 040", "prix": 25, "score": 80, "score_confiance": 80, "lien": "https://example.com/ref"},
+        {"marketplace": "eBay", "titre": "Nike sans référence", "prix": 20, "score": 95, "score_confiance": 90, "niveau_identite": "possible", "lien": "https://example.com/no"},
+        {"marketplace": "eBay", "titre": "Nike DM4652 040", "prix": 25, "score": 80, "score_confiance": 80, "niveau_identite": "possible", "lien": "https://example.com/ref"},
     ]
-    with patch("app_web.rechercher_multi_marketplaces", return_value=mocked_results) as mocked_search:
+    # L'index local persistant peut contenir des offres d'exécutions
+    # précédentes : on le désactive pour garder ce test déterministe, sinon une
+    # carte indexée pourrait dédoublonner les résultats simulés.
+    with patch("app_web.rechercher_multi_marketplaces", return_value=mocked_results) as mocked_search, \
+            patch.object(index_engine, "index_enabled", return_value=False), \
+            patch("app_web._index_results_async"):
         strict_response = strict_client.post("/", data={"csrf_token": strict_csrf, "marque": "Nike", "prix": "50", "plateforme": "eBay", "reference_exacte": "DM4652-040", "reference_stricte": "1"})
-    strict_html = strict_response.get_data(as_text=True)
-    assert strict_response.status_code == 200 and "Nike DM4652 040" in strict_html and "Nike sans référence" not in strict_html
-    assert "1</span> trouvés" in strict_html
-    assert mocked_search.call_args.kwargs["marque"] == "Nike DM4652-040"
+        strict_html = strict_response.get_data(as_text=True)
+        assert strict_response.status_code == 200
+        strict_token = _search_token_from(strict_html)
+        assert strict_token and '"pending": true' in strict_html
+        strict_results = _await_search(strict_client, strict_token)
+        strict_titles = [item["titre"] for item in strict_results]
+        assert "Nike DM4652 040" in strict_titles and "Nike sans référence" not in strict_titles
+        assert mocked_search.call_args.kwargs["marque"] == "Nike DM4652-040"
     with patch("app_web.rechercher_multi_marketplaces") as rejected_search:
         invalid_reference = strict_client.post("/", data={"csrf_token": strict_csrf, "marque": "Nike", "prix": "50", "plateforme": "eBay", "reference_exacte": "--"})
     assert invalid_reference.status_code == 200 and "Référence exacte invalide." in invalid_reference.get_data(as_text=True)
@@ -121,9 +149,10 @@ def main():
     assert '<option value="eBay" selected>' in shared and 'id="shown-count"' not in shared
 
     calls = []
-    original_search = app_web.rechercher_multi_marketplaces
-    app_web.rechercher_multi_marketplaces = lambda **kwargs: calls.append(kwargs) or sample_results()
-    try:
+    with patch("app_web.rechercher_multi_marketplaces", side_effect=lambda **kwargs: calls.append(kwargs) or sample_results()), \
+            patch("app_web._progressive_source_order", return_value=["eBay"]), \
+            patch.object(index_engine, "index_enabled", return_value=False), \
+            patch("app_web._index_results_async"):
         response = client.post("/", data={"marque": "Nike Trail", "prix": "50", "plateforme": "Toutes", "csrf_token": csrf_token})
         assert response.status_code == 200
         html = response.get_data(as_text=True)
@@ -131,7 +160,8 @@ def main():
         assert 'id="price-min-filter"' in html and 'id="price-max-filter"' in html and 'id="exclude-filter"' in html
         assert 'id="price-exact-filter"' in html and 'id="price-tolerance-filter"' in html
         assert 'id="batch-size"' in html and '<option value="50" selected>' in html
-        assert 'id="shown-count">50' in html and 'id="total-count">170' in html
+        # V4 : la page s'affiche immédiatement puis se remplit en arrière-plan.
+        assert 'id="shown-count">' in html and 'id="total-count">' in html and '"pending": true' in html
         assert all(section in html for section in (
             'id="view-dashboard"', 'id="view-radar"', 'id="view-favorites"',
             'id="view-history"', 'id="view-settings"',
@@ -144,8 +174,12 @@ def main():
         assert 'data-reseller-nav' in html and 'id="experience-toggle"' in html
         assert 'class="skip-link"' in html and 'id="main-content" tabindex="-1"' in html
         assert 'id="load-status" role="status" aria-live="polite"' in html
+        post_token = _search_token_from(html)
+        assert post_token
+        live_results = _await_search(client, post_token)
+        assert len(live_results) == 170 and all("Annonce" in item["titre"] for item in live_results)
         plans = client.get('/api/billing/plans').get_json()
-        assert plans['plans']['pro']['monthly'] == 3.99
+        assert plans['plans']['pro']['monthly'] == SUBSCRIPTION_PLANS['pro']['monthly']
         import os
         os.environ.pop('STRIPE_SECRET_KEY', None)
         checkout = client.post('/api/billing/checkout', json={'plan': 'pro', 'cycle': 'monthly'}, headers={'X-CSRF-Token': csrf_token})
@@ -169,10 +203,12 @@ def main():
         assert len(calls) == 1
         lots_response = client.post("/", data={"marque": "Nike Trail", "prix": "50", "plateforme": "Toutes", "lots": "100", "csrf_token": csrf_token})
         lots_html = lots_response.get_data(as_text=True)
-        assert 'id="shown-count">100' in lots_html and 'id="total-count">170' in lots_html
+        assert 'id="shown-count">' in lots_html and 'id="total-count">' in lots_html and '"pending": true' in lots_html
         assert '<option value="100" selected>' in lots_html and "window.LUXE_RADAR" in lots_html
-    finally:
-        app_web.rechercher_multi_marketplaces = original_search
+        lots_token = _search_token_from(lots_html)
+        assert lots_token
+        lots_results = _await_search(client, lots_token)
+        assert len(lots_results) == 170
 
     active = set(get_available_connectors())
     assert {"Vinted", "eBay", "Grailed", "67behaviour"}.issubset(active)

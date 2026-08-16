@@ -12,7 +12,15 @@ REQUIRED = {
     "connector_type", "supports_search", "supports_price", "supports_image",
     "supports_reference", "notes",
 }
-ACTIVE = {"Vinted", "eBay", "Grailed", "67behaviour", "AliExpress", "ASOS", "SSENSE"}
+# V3.5 : expansion fashion/retail — le catalogue active les 24 connecteurs
+# du registre (les anciennes 7 références historiques ont été élargies).
+ACTIVE = {
+    "1688", "21RUN", "67behaviour", "ASOS", "AliExpress", "Alltricks",
+    "Cdiscount", "Courir", "DHgate", "Deporvillage", "Direct Running",
+    "Ekosport", "Footshop", "Grailed", "Hardloop", "JD Sports",
+    "MisterRunning", "Running Point", "SSENSE", "Spartoo", "Vinted",
+    "Zalando", "eBay", "i-Run",
+}
 
 
 def main():
@@ -44,20 +52,20 @@ def main():
     assert first["total_catalog"] == len(sites) and first["has_more"] is True
     assert len({site["domain"] for site in first["sites"]}) == CATALOG_BATCH_SIZE
     assert {site["name"] for site in first["sites"] if site["status"] == "active"} == ACTIVE
-    assert first["status_counts"]["active"] == 7 and first["categories"]
+    assert first["status_counts"]["active"] == len(ACTIVE) and first["categories"]
     second = client.get(f"/api/catalog?offset={CATALOG_BATCH_SIZE}").get_json()
     first_domains = {site["domain"] for site in first["sites"]}
     second_domains = {site["domain"] for site in second["sites"]}
     assert len(second["sites"]) == CATALOG_BATCH_SIZE and first_domains.isdisjoint(second_domains)
     active_page = client.get("/api/catalog?status=active").get_json()
-    assert active_page["total"] == 7 and all(site["enabled"] for site in active_page["sites"])
+    assert active_page["total"] == len(ACTIVE) and all(site["enabled"] for site in active_page["sites"])
     ebay_page = client.get("/api/catalog?q=ebay").get_json()
     assert ebay_page["total"] >= 1 and any(site["name"] == "eBay" for site in ebay_page["sites"])
     accent_page = client.get("/api/catalog?q=vetements").get_json()
     assert accent_page["total"] >= 700
     assert client.get("/api/catalog?offset=bad").status_code == 400
     assert client.get("/api/catalog?status=made_up").status_code == 400
-    print(f"OK - Catalogue massif: {len(sites)} domaines uniques, 7 actifs protégés.")
+    print(f"OK - Catalogue massif: {len(sites)} domaines uniques, {len(ACTIVE)} actifs protégés.")
 
 
 if __name__ == "__main__":

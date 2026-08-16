@@ -12,6 +12,7 @@ import billing_stripe
 
 FAKE_PRICE_ID = "price_test_radar_pro_monthly"
 FAKE_SESSION_URL = "https://checkout.stripe.com/c/pay/test-session"
+LOOKUP_PRO_MONTHLY = "luxe_radar_v340_pro_monthly"
 
 
 class FakeStripe:
@@ -29,7 +30,7 @@ class FakeStripe:
             return {"id": "prod_test", "name": data["name"]}
         if path == "/prices":
             created = {
-                "id": FAKE_PRICE_ID if data.get("lookup_key") == "luxe_radar_pro_monthly" else "price_test_other",
+                "id": FAKE_PRICE_ID if data.get("lookup_key") == LOOKUP_PRO_MONTHLY else "price_test_other",
                 "lookup_key": data.get("lookup_key"),
                 "unit_amount": int(data["unit_amount"]),
                 "recurring[interval]": data["recurring[interval]"],
@@ -49,6 +50,7 @@ def test_checkout_flow():
     billing_stripe._CACHE_PRICES.clear()
     billing_stripe._api = fake
     os.environ["STRIPE_SECRET_KEY"] = "sk_test_demo"
+    os.environ["LUXE_RADAR_BILLING_ENABLED"] = "1"
     client = app.test_client()
     client.get("/")
     with client.session_transaction() as browser_session:
@@ -63,7 +65,7 @@ def test_checkout_flow():
         assert response.status_code == 200
         assert response.get_json()["checkout_url"] == FAKE_SESSION_URL
         assert any(path == "/checkout/sessions" for path, _ in fake.calls)
-        assert any(path == "/prices" and "luxe_radar_pro_monthly" in (data.get("lookup_keys[]") or data.get("lookup_keys[0]") or "") for path, data in fake.calls)
+        assert any(path == "/prices" and LOOKUP_PRO_MONTHLY in (data.get("lookup_keys[]") or data.get("lookup_keys[0]") or "") for path, data in fake.calls)
         annual = client.post(
             "/api/billing/checkout",
             json={"plan": "reseller", "cycle": "yearly"},
@@ -81,12 +83,14 @@ def test_checkout_flow():
         billing_stripe._CACHE_PRICES.clear()
         billing_stripe._CACHE_PRICES.update(original_cache)
         os.environ.pop("STRIPE_SECRET_KEY", None)
+        os.environ.pop("LUXE_RADAR_BILLING_ENABLED", None)
 
 
 def test_billing_disabled_without_key():
     client = app.test_client()
     client.get("/")
     os.environ.pop("STRIPE_SECRET_KEY", None)
+    os.environ.pop("LUXE_RADAR_BILLING_ENABLED", None)
     billing_stripe._CACHE_PRICES.clear()
     with client.session_transaction() as browser_session:
         csrf = browser_session["csrf_token"]
@@ -107,6 +111,7 @@ def test_stripe_error_maps_to_502():
     original_api = billing_stripe._api
     billing_stripe._api = failing_api
     os.environ["STRIPE_SECRET_KEY"] = "sk_test_bad"
+    os.environ["LUXE_RADAR_BILLING_ENABLED"] = "1"
     client = app.test_client()
     client.get("/")
     with client.session_transaction() as browser_session:
@@ -123,6 +128,7 @@ def test_stripe_error_maps_to_502():
     finally:
         billing_stripe._api = original_api
         os.environ.pop("STRIPE_SECRET_KEY", None)
+        os.environ.pop("LUXE_RADAR_BILLING_ENABLED", None)
 
 
 if __name__ == "__main__":
