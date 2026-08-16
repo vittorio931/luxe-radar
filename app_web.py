@@ -262,6 +262,9 @@ def health():
         "diagnostics": {
             "env": current_environment(),
             "queue_p50_ms": source_health.queue_p50(),
+            "queue_p95_ms": source_health.queue_p95(),
+            "network_p50_ms": source_health.network_p50(),
+            "network_p95_ms": source_health.network_p95(),
             "cooldown_count": source_health.cooldown_count(),
             "memory_rss_mb": memory_rss_mb,
         },
@@ -1700,6 +1703,9 @@ def sources_health():
         "env": current_environment(),
         "cooldown_count": source_health.cooldown_count(),
         "queue_p50_ms": source_health.queue_p50(),
+        "queue_p95_ms": source_health.queue_p95(),
+        "network_p50_ms": source_health.network_p50(),
+        "network_p95_ms": source_health.network_p95(),
     }
     _sources_health_cache.update({"at": time.time(), "profile": profile})
     return jsonify({"sources": profile})

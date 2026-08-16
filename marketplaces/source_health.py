@@ -81,6 +81,21 @@ _TIER_A_BONUS = 50
 _TIER_C_PENALTY = 60
 
 
+def _pct(samples, q):
+    """Percentile simple (50/95) d'un iterable, arrondi en millisecondes."""
+    values = [max(0.0, float(value)) for value in (samples or []) if value is not None]
+    if not values:
+        return None
+    values.sort()
+    if q >= 100:
+        return round(values[-1] * 1000)
+    index = (len(values) - 1) * (q / 100.0)
+    lower = int(index)
+    upper = min(lower + 1, len(values) - 1)
+    frac = index - lower
+    return round((values[lower] * (1 - frac) + values[upper] * frac) * 1000)
+
+
 class _SourceHealthEntry:
     def __init__(self, name):
         self.name = name
@@ -277,19 +292,33 @@ class SourceHealthRegistry:
                     "consecutive_empty": entry.consecutive_empty,
                     "consecutive_failures": entry.consecutive_failures,
                     "runs": entry.runs,
-                    "network_p50_ms": round(statistics.median(entry.network_samples) * 1000) if entry.network_samples else None,
-                    "queue_p50_ms": round(statistics.median(entry.queue_samples) * 1000) if entry.queue_samples else None,
+                    "network_p50_ms": _pct(entry.network_samples, 50),
+                    "network_p95_ms": _pct(entry.network_samples, 95),
+                    "queue_p50_ms": _pct(entry.queue_samples, 50),
+                    "queue_p95_ms": _pct(entry.queue_samples, 95),
                     "raw_recent": sum(entry.received_samples),
                     "relevant_recent": sum(entry.relevant_samples),
                 }
             return result
 
-    def queue_p50(self):
+    def _global_pct(self, samples, q):
         with self._lock:
-            samples = []
+            flat = []
             for entry in self._entries.values():
-                samples.extend(entry.queue_samples)
-        return round(statistics.median(samples) * 1000) if samples else None
+                flat.extend(samples(entry))
+        return _pct(flat, q)
+
+    def queue_p50(self):
+        return self._global_pct(lambda entry: entry.queue_samples, 50)
+
+    def queue_p95(self):
+        return self._global_pct(lambda entry: entry.queue_samples, 95)
+
+    def network_p50(self):
+        return self._global_pct(lambda entry: entry.network_samples, 50)
+
+    def network_p95(self):
+        return self._global_pct(lambda entry: entry.network_samples, 95)
 
     def cooldown_count(self):
         now = time.time()
