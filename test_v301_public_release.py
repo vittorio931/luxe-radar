@@ -13,8 +13,8 @@ billing = (root / "billing_stripe.py").read_text(encoding="utf-8")
 render = (root / "render.yaml").read_text(encoding="utf-8")
 sites = json.loads((root / "marketplaces" / "sites.json").read_text(encoding="utf-8"))["sites"]
 
-assert 'APP_VERSION = "3.7.0"' in app
-assert 'ASSET_VERSION = "20260815-370"' in app
+assert 'APP_VERSION = "3.7.1"' in app
+assert 'ASSET_VERSION = "20260816-371"' in app
 assert "Le HTML n'attend plus eBay ni aucun autre marchand" in app
 assert '"Spartoo", "Footshop", "JD Sports"' in app
 assert '90 if request.endpoint == "expand_results"' in app
@@ -44,8 +44,8 @@ assert '.recent-query-chip' in css
 assert '.quick-result-chip.featured-action' in css
 assert 'body.radar-focus .main' in css
 
-assert 'luxe-radar-shell-v370' in sw
-assert '20260815-370' in sw
+assert 'luxe-radar-shell-v371' in sw
+assert '20260816-371' in sw
 
 active = {x["name"] for x in sites if x.get("status") == "active"}
 for source in ("Spartoo", "Footshop", "JD Sports", "eBay", "Vinted", "Zalando"):

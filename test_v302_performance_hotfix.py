@@ -7,8 +7,8 @@ zalando = (root / 'marketplaces/connectors/zalando.py').read_text(encoding='utf-
 sw = (root / 'static/sw.js').read_text(encoding='utf-8')
 req = (root / 'requirements.txt').read_text(encoding='utf-8')
 
-assert 'APP_VERSION = "3.7.0"' in app
-assert 'ASSET_VERSION = "20260815-370"' in app
+assert 'APP_VERSION = "3.7.1"' in app
+assert 'ASSET_VERSION = "20260816-371"' in app
 for source in ("Vinted","Zalando","ASOS","SSENSE","Cdiscount"):
     assert f'"{source}"' in app
 assert '"Cdiscount"' in app and '"Zalando"' in app
@@ -27,8 +27,8 @@ assert 'if response.status_code in {403, 429}' in zalando
 assert 'aucun contournement' in zalando
 assert 'pause rapide' in zalando
 
-assert 'luxe-radar-shell-v370' in sw
-assert '20260815-370' in sw
+assert 'luxe-radar-shell-v371' in sw
+assert '20260816-371' in sw
 assert 'gunicorn==23.0.0' in req
 assert 'gunicorn==23.0.1' not in req
 assert not (root / '.env').exists()

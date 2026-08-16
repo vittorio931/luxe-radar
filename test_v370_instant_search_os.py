@@ -13,13 +13,13 @@ sw = (root / 'static' / 'sw.js').read_text(encoding='utf-8')
 quality = (root / 'marketplaces' / 'connectors' / 'quality_filters.py').read_text(encoding='utf-8')
 retail = (root / 'marketplaces' / 'connectors' / 'retail_public.py').read_text(encoding='utf-8')
 
-assert 'APP_VERSION = "3.7.0"' in app and 'ASSET_VERSION = "20260815-370"' in app
+assert 'APP_VERSION = "3.7.1"' in app and 'ASSET_VERSION = "20260816-371"' in app
 assert 'index_mode = index_hit_count > 0' in app
 assert "Le HTML n'attend plus eBay ni aucun autre marchand" in app
 assert '_progressive_source_order' in app and '_RUNNING_BRANDS' in app and '_LUXURY_FASHION_BRANDS' in app
 assert 'indexed_suggestions = index_engine.suggest(query, limit=8)' in app
 assert '"catalog_total": int(indexed.total)' in app
-assert 'luxe-radar-shell-v370' in sw and '20260815-370' in sw
+assert 'luxe-radar-shell-v371' in sw and '20260816-371' in sw
 
 # A shopping search no longer requires a max budget.
 price_fragment = tpl.split('id="prix"', 1)[1].split('>', 1)[0]
@@ -33,7 +33,7 @@ for selector in ("#global-search-input", "#home-search-input", "#marque"):
     assert selector in js
 assert "setTimeout(()=>$('#search-form')?.requestSubmit(),30)" in js
 assert 'query-suggestion-summary' in css
-assert 'uiVersion:370' in js
+assert 'uiVersion:371' in js
 
 # Safe retail redirects: malformed JS placeholders are never followed as DNS names.
 assert '_safe_public_get' in retail and '_same_public_host' in retail

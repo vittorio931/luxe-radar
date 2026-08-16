@@ -14,9 +14,9 @@ req = (root / "requirements.txt").read_text(encoding="utf-8")
 sites = json.loads((root / "marketplaces" / "sites.json").read_text(encoding="utf-8"))["sites"]
 
 # Release/cache identity.
-assert 'APP_VERSION = "3.7.0"' in app
-assert 'ASSET_VERSION = "20260815-370"' in app
-assert 'luxe-radar-shell-v370' in sw and '20260815-370' in sw
+assert 'APP_VERSION = "3.7.1"' in app
+assert 'ASSET_VERSION = "20260816-371"' in app
+assert 'luxe-radar-shell-v371' in sw and '20260816-371' in sw
 assert 'gunicorn==23.0.0' in req
 
 # V3.2.0 precise-by-default visibility is included.

@@ -9,8 +9,8 @@ html = (root / 'templates' / 'index.html').read_text(encoding='utf-8')
 css = (root / 'static' / 'app.css').read_text(encoding='utf-8')
 sites = json.loads((root / 'marketplaces' / 'sites.json').read_text(encoding='utf-8'))['sites']
 
-assert 'APP_VERSION = "3.7.0"' in app
-assert 'ASSET_VERSION = "20260815-370"' in app
+assert 'APP_VERSION = "3.7.1"' in app
+assert 'ASSET_VERSION = "20260816-371"' in app
 
 new_sources = [
     'i-Run','Direct Running','Alltricks','Deporvillage','Running Point',
