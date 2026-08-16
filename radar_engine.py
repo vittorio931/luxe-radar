@@ -1496,9 +1496,28 @@ def rechercher_vinted(
     vinted_deadline = perf_counter() + vinted_total_budget_s
 
     with sync_playwright() as p:
-        browser = p.chromium.launch(
-            headless=headless
+        # V2.9.x : sur le petit service Render, le démarrage de Chromium peut
+        # coûter ~30 s pour 0 résultat quand Vinted refuse l'egress datacenter.
+        # On borne le lancement lui-même : s'il ne démarre pas à temps, on sort
+        # proprement (source vide -> cooldown vide-lent) au lieu de monopoliser
+        # un worker progressif pendant toute la durée d'un échec prévisible.
+        vinted_launch_ms = _env_int(
+            "LUXE_RADAR_VINTED_LAUNCH_MS",
+            15000 if _is_render_runtime() else 25000,
+            minimum=5000,
+            maximum=60000,
         )
+        try:
+            browser = p.chromium.launch(
+                headless=headless,
+                timeout=vinted_launch_ms,
+            )
+        except PlaywrightTimeoutError:
+            print(
+                f"[Vinted] Démarrage Chromium > {vinted_launch_ms}ms -> "
+                "source ignorée proprement"
+            )
+            return []
 
         page = browser.new_page(
             viewport={

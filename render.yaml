@@ -38,6 +38,8 @@ services:
         value: "Alltricks, Courir, Deporvillage, Ekosport, Footshop, Grailed, JD Sports, Zalando, i-Run"
       - key: LUXE_RADAR_VINTED_TIMEOUT_MS
         value: "6500"
+      - key: LUXE_RADAR_VINTED_LAUNCH_MS
+        value: "15000"
       - key: LUXE_RADAR_VINTED_SETTLE_MS
         value: "250"
       - key: LUXE_RADAR_VINTED_TOTAL_SECONDS
