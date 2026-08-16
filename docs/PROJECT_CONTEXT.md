@@ -296,3 +296,50 @@ Correct navigation from elsewhere:
 
 Correct launch:
 `.\.venv\Scripts\python.exe app_web.py`
+
+## 13. Web-app vs collecteur (architecture)
+
+Deux rôles distincts, aujourd'hui regroupés dans le même processus, mais
+conceptuellement séparés pour la suite :
+
+### Web-app (le rôle rapide)
+- Répond vite aux requêtes de l'utilisateur : rendu de la page, POST de
+  recherche, polling des résultats, filtres, tri, comparaison.
+- Sur Render : un seul processus `gunicorn` (`WEB_CONCURRENCY=1`) qui doit
+  rester léger et réactif. `app_web.py` ne doit jamais faire de travail lent
+  dans le chemin de requête (pas de scraping synchrone dans le render).
+
+### Collecteur (le rôle lent)
+- Fait le travail de recherche/collecte en arrière-plan : interroger chaque
+  marketplace, lancer Chromium quand nécessaire, parser les cartes, appliquer
+  les filtres de pertinence/qualité.
+- Coûts typiques observés en production : eBay ~20-50 s réseau, AliExpress
+  ~30-45 s, Vinted ~34 s (démarrage Chromium + navigation bornée), une vague
+  de recherche progressive ~80-100 s au froid.
+
+### État actuel (V4, recherche progressive)
+- `app_web.py` lance la recherche en arrière-plan progressif : les sources
+  sont ordonnées par intention de l'utilisateur + santé de la source
+  (`_progressive_source_order`), exécutées par des workers
+  (`LUXE_RADAR_PROGRESSIVE_WORKERS`, 4 sur Render), sous un sémaphore Chromium
+  partagé (`_browser_progressive_semaphore`, 1 navigateur à la fois pour
+  Vinted/Grailed).
+- `marketplaces/source_health.py` est le registre de santé/cooldown : une
+  source bloquée (403/429/challenge) ou vide-lente répétée est mise en
+  cooldown (aucun worker consommé) ; en production les sources connues
+  bloquées sont pré-déclarées via `LUXE_RADAR_PRESEED_BLOCKED`.
+- Les résultats sont stockés en mémoire par token (cache progressif) puis
+  persistés dans l'index local par un thread d'arrière-plan
+  (`_index_results_async`, `_persist_index`) ; `warm_index` pré-remplit l'index
+  au démarrage.
+
+### Direction (séparation future)
+- Le web-app doit devenir une lecture rapide sur un stockage/index persistant
+  partagé (offres déjà collectées), pendant que le collecteur — processus ou
+  worker asynchrone distinct — fait le travail lent et alimente ce stockage.
+- Les deux rôles ne doivent pas tourner dans le même chemin de requête : si la
+  collecte lente bloque le processus web, l'utilisateur attend et Render
+  signale une instance non réactive.
+- Une source lente ou vide ne doit jamais retarder le rendu des premiers
+  résultats pertinents (le cooldown vide-lent et le preseed protègent déjà ce
+  contrat en V4).
