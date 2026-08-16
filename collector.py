@@ -29,6 +29,16 @@ from pathlib import Path
 from threading import Event, Lock, Thread
 from time import perf_counter, sleep, time
 
+try:
+    import fcntl  # Linux (Render)
+except ImportError:  # pragma: no cover - Windows
+    fcntl = None  # type: ignore[assignment]
+
+try:
+    import msvcrt  # Windows
+except ImportError:  # pragma: no cover - Linux
+    msvcrt = None  # type: ignore[assignment]
+
 import index_engine
 from connector_registry import get_available_connectors
 from marketplaces import source_health
@@ -65,6 +75,48 @@ DEFAULT_PRIORITY = [
     "Alltricks", "Deporvillage", "21RUN", "Running Point", "MisterRunning",
     "Hardloop", "Ekosport", "Courir", "JD Sports",
 ]
+
+# ---------------------------------------------------------------------------
+# Coordinateur multi-process (Render : plusieurs workers gunicorn partagent le
+# même disque éphémère). Un seul process "walke" le catalogue ; les autres
+# restent observateurs : leur statut est lu depuis la base partagée et leurs
+# vagues sont persistées dans collector_pending, absorbées par le walker.
+# ---------------------------------------------------------------------------
+
+_LOCK_UNSUPPORTED = object()
+
+
+def _try_lock_file(lock_path: Path):
+    """Verrou exclusif non bloquant (flock/msvcrt) sur un fichier côté index.
+
+    Retourne un handle à garder ouvert (verrou tenu), ``None`` si un autre
+    process détient déjà le verrou, ou ``_LOCK_UNSUPPORTED`` si aucun verrou
+    n'est possible (comportement ancien : chaque process marche).
+    """
+    if fcntl is None and msvcrt is None:  # pragma: no cover - jamais atteint
+        return _LOCK_UNSUPPORTED
+    try:
+        lock_path.parent.mkdir(parents=True, exist_ok=True)
+        handle = open(lock_path, "a+b")
+    except OSError:
+        return _LOCK_UNSUPPORTED
+    try:
+        handle.seek(0)
+        if handle.read(1) == b"":
+            handle.write(b"\x00")
+            handle.flush()
+        handle.seek(0)
+        if fcntl is not None:
+            fcntl.flock(handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+        else:
+            msvcrt.locking(handle.fileno(), msvcrt.LK_NBLCK, 1)  # type: ignore[union-attr]
+        return handle
+    except OSError:
+        try:
+            handle.close()
+        except OSError:
+            pass
+        return None
 
 
 def _env_bool(name: str, default: bool = False) -> bool:
@@ -436,13 +488,28 @@ class Collector:
         self._recent_runs: list[dict] = []
         self._stop = Event()
         self._thread: Thread | None = None
+        self._walker: bool | None = None
+        self._lock_handle = None
         self._last_trigger_sweep = 0.0
 
     # -- API publique -------------------------------------------------------
 
+    def _lock_path(self) -> Path:
+        base = self._path if self._path is not None else index_engine.default_db_path()
+        return Path(str(base) + ".collector.lock")
+
     def start(self):
         if self._thread is not None and self._thread.is_alive():
             return
+        # Multi-workers : un seul process marche (verrou fichier partagé côté
+        # index). Les observateurs restent utiles : statut lu depuis la base
+        # partagée et vagues persistées dans collector_pending.
+        lock = _try_lock_file(self._lock_path())
+        if lock is not _LOCK_UNSUPPORTED and lock is None:
+            self._walker = False
+            return
+        self._walker = True
+        self._lock_handle = lock if lock is not _LOCK_UNSUPPORTED else None
         self._stop.clear()
         self._thread = Thread(target=self._loop, name="luxe-radar-collector", daemon=True)
         self._thread.start()
@@ -519,6 +586,7 @@ class Collector:
             "enabled": COLLECTOR_ENABLED,
             "pid": os.getpid(),
             "thread_alive": bool(thread_alive),
+            "walker": self._walker,
             "running": bool(running),
             "busy": in_flight is not None,
             "in_flight": {"query": in_flight[0], "price_max": in_flight[1]} if in_flight else None,

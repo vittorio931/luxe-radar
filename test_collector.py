@@ -384,6 +384,24 @@ def test_wave_cross_process_delivery():
         assert index_engine.drain_collector_triggers(20, path=db) == []
 
 
+def test_single_walker_across_collectors():
+    """Multi-workers : un seul Collector marche (verrou fichier partage),
+    les autres restent observateurs sans thread."""
+    with _with_index_db() as db:
+        first = collector.Collector(path=db)
+        second = collector.Collector(path=db)
+        first.start()
+        try:
+            second.start()
+            assert first.status()["walker"] is True
+            assert first.status()["thread_alive"] is True
+            assert second.status()["walker"] is False
+            assert second.status()["thread_alive"] is False
+        finally:
+            first.stop()
+            second.stop()
+
+
 def _main():
     import sys
     tests = [value for key, value in sorted(globals().items()) if key.startswith("test_") and callable(value)]
