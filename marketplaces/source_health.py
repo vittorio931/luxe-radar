@@ -159,6 +159,28 @@ class SourceHealthRegistry:
             entry.cooldown_until = time.time() + COOLDOWN_BLOCKED_SECONDS
             entry.cooldown_reason = str(reason or "refus/challenge")
 
+    def preseed_blocked(self, name, reason="predeclare en config"):
+        """Blocage declare en configuration (pas une mesure du process).
+
+        Utilise par LUXE_RADAR_PRESEED_BLOCKED pour eviter de re-payer la
+        taxe froide (une source bloquee pour l'environnement re-tourne a
+        chaque deploiement avant d'etre reapprise). S'appuie sur des
+        observations reelles consignees dans la configuration de deploiement.
+        """
+        if not name:
+            return
+        with self._lock:
+            entry = self._entry(name)
+            entry.blocked = True
+            if not entry.cooldown_until or entry.cooldown_until <= time.time():
+                entry.cooldown_until = time.time() + COOLDOWN_BLOCKED_SECONDS
+            if entry.cooldown_reason and entry.cooldown_reason.startswith("HTTP"):
+                entry.cooldown_reason = entry.cooldown_reason
+            else:
+                entry.cooldown_reason = str(reason or "predeclare en config")
+            if not entry.last_failure_at:
+                entry.last_failure_at = time.time()
+
     def record_exception(self, name):
         """Erreur reseau/lancement (timeout, echec DNS, playwright...)."""
         if not name:
@@ -331,3 +353,22 @@ class SourceHealthRegistry:
 
 
 registry = SourceHealthRegistry()
+
+
+def _preseed_from_env():
+    """Pre-declare les sources bloquees pour l'environnement courant.
+
+    Liste lue dans LUXE_RADAR_PRESEED_BLOCKED (noms separes par des virgules),
+    c'est-a-dire un parametrage de deploiement derive d'observations reelles,
+    jamais une valeur inventee. Les sources predeclarees restent omises des
+    vagues pendant toute la duree de leur cooldown.
+    """
+    raw = (os.environ.get("LUXE_RADAR_PRESEED_BLOCKED") or "").strip()
+    if not raw:
+        return
+    names = [name.strip() for name in raw.split(",") if name.strip()]
+    for name in names:
+        registry.preseed_blocked(name)
+
+
+_preseed_from_env()

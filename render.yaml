@@ -29,7 +29,13 @@ services:
       - key: LUXE_RADAR_MAX_CACHED_SEARCHES
         value: "8"
       - key: LUXE_RADAR_PROGRESSIVE_WORKERS
-        value: "2"
+        value: "4"
+      # Sources dont le benchmark prod a prouvé le blocage (403/429/challenge)
+      # pour l'egress datacenter : omises des vagues dès le démarrage pour ne
+      # pas re-payer la taxe froide à chaque déploiement. Données réelles,
+      # pas de contournement : après le cooldown, un nouveau test est tenté.
+      - key: LUXE_RADAR_PRESEED_BLOCKED
+        value: "Alltricks, Courir, Deporvillage, Ekosport, Footshop, Grailed, JD Sports, Zalando, i-Run"
       - key: LUXE_RADAR_VINTED_TIMEOUT_MS
         value: "6500"
       - key: LUXE_RADAR_VINTED_SETTLE_MS
