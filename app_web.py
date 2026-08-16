@@ -826,7 +826,6 @@ def _clean_cache(now=None):
         owner = str(entry.get("owner") or "")
         if owner and _progressive_owner_tokens.get(owner) == token:
             _progressive_owner_tokens.pop(owner, None)
-    _clean_sessions_disk(now)
 
 
 # V4.1 : nettoyage borné des sessions SQLite (jamais plus d'une écriture
@@ -898,6 +897,9 @@ def _persist_search_session(entry, token, owner):
             universe=str(entry.get("universe") or ""),
             state=_persistable_state(entry),
         )
+        # Nettoyage SQLite hors de _cache_lock : une contention disque ne doit
+        # jamais bloquer /status ni /api/results pendant le scroll.
+        _clean_sessions_disk()
     except Exception:
         app.logger.warning("Session de recherche non persistée: %s", token, exc_info=True)
 
