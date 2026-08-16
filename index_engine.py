@@ -407,23 +407,74 @@ def _query_match_score(item: dict, query: str, *, info=None, q_key: str | None =
 # web en « database is locked » sur Render (V3.8 prod).
 _SCHEMA_READY_PATHS: set[str] = set()
 _SCHEMA_READY_LOCK = threading.Lock()
+_SCHEMA_PROBE_TIMEOUT_MS = 150
+_SCHEMA_LOCK_WAIT_SECONDS = 0.25
+
+
+def _schema_is_current_fast(db_path: Path) -> bool:
+    """Detecte une DB deja migree sans rejouer le DDL sur le chemin web."""
+    if not db_path.exists():
+        return False
+    probe = None
+    try:
+        probe = sqlite3.connect(
+            str(db_path),
+            timeout=_SCHEMA_PROBE_TIMEOUT_MS / 1000.0,
+        )
+        probe.execute(f"PRAGMA busy_timeout={_SCHEMA_PROBE_TIMEOUT_MS}")
+        probe.execute("PRAGMA query_only=ON")
+        row = probe.execute(
+            "SELECT value FROM index_meta WHERE key='schema_version'"
+        ).fetchone()
+        return bool(row and int(row[0]) >= SCHEMA_VERSION)
+    except (sqlite3.Error, TypeError, ValueError):
+        return False
+    finally:
+        if probe is not None:
+            probe.close()
 
 
 @contextmanager
 def _connect(path: Path | None = None):
     db_path = (path or default_db_path()).resolve()
     db_path.parent.mkdir(parents=True, exist_ok=True)
+    path_key = str(db_path)
+
+    # Apres un restart Render, la DB persistante est normalement deja au bon
+    # schema. Une lecture fail-fast suffit alors : pas de WAL/DDL/migration.
+    schema_ready = path_key in _SCHEMA_READY_PATHS
+    if not schema_ready and _schema_is_current_fast(db_path):
+        schema_ready = True
+        # Cache best-effort only: never wait on this lock on the web path.
+        if _SCHEMA_READY_LOCK.acquire(blocking=False):
+            try:
+                _SCHEMA_READY_PATHS.add(path_key)
+            finally:
+                _SCHEMA_READY_LOCK.release()
+
     conn = sqlite3.connect(str(db_path), timeout=8.0)
     conn.row_factory = sqlite3.Row
     try:
         conn.execute("PRAGMA synchronous=NORMAL")
         conn.execute("PRAGMA busy_timeout=8000")
         conn.execute("PRAGMA foreign_keys=ON")
-        with _SCHEMA_READY_LOCK:
-            if str(db_path) not in _SCHEMA_READY_PATHS:
-                conn.execute("PRAGMA journal_mode=WAL")
-                _ensure_schema(conn)
-                _SCHEMA_READY_PATHS.add(str(db_path))
+
+        if not schema_ready and path_key not in _SCHEMA_READY_PATHS:
+            # Ne jamais faire attendre indefiniment les threads web derriere
+            # une initialisation de schema deja bloquee par SQLite.
+            acquired = _SCHEMA_READY_LOCK.acquire(
+                timeout=_SCHEMA_LOCK_WAIT_SECONDS
+            )
+            if not acquired:
+                raise sqlite3.OperationalError("schema initialization busy")
+            try:
+                if path_key not in _SCHEMA_READY_PATHS:
+                    conn.execute("PRAGMA journal_mode=WAL")
+                    _ensure_schema(conn)
+                    _SCHEMA_READY_PATHS.add(path_key)
+            finally:
+                _SCHEMA_READY_LOCK.release()
+
         yield conn
         conn.commit()
     finally:
