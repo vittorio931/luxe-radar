@@ -80,7 +80,7 @@ def main():
     assert invalid_reference.status_code == 200 and "Référence exacte invalide." in invalid_reference.get_data(as_text=True)
     rejected_search.assert_not_called()
     ebay_source = (ROOT / "marketplaces" / "connectors" / "ebay.py").read_text(encoding="utf-8")
-    assert "min(\n                limit,\n                100," in ebay_source
+    assert "min(\n                limit,\n                200," in ebay_source
     results = sample_results()
     ranked, counts = _selection_diversifiee(results, len(results))
     assert len(ranked) == 170 and counts["eBay"] == 120

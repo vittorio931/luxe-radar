@@ -1414,7 +1414,7 @@ class EbayConnector(
             1,
             min(
                 limit,
-                100,
+                200,
             ),
         )
 
@@ -1470,12 +1470,14 @@ class EbayConnector(
         # V2.9.2 : 5x + plafond 200 ralentissait fortement les requêtes
         # larges alors que le radar sait maintenant paginer à l'infini.
         # Un sur-échantillonnage x2 suffit pour alimenter le filtre strict.
+        # Le plafond 200 (pageSize API max) sert au collecteur profond ;
+        # le chemin live reste sous 2x et garde un pageSize de 120 au plus.
         request_limit = min(
             max(
                 limit * 2,
                 50,
             ),
-            120,
+            200,
         )
 
         try:

@@ -490,6 +490,27 @@ def _ensure_schema(conn: sqlite3.Connection) -> None:
             ON catalog_offers(identity_level, identity_score DESC);
         CREATE INDEX IF NOT EXISTS idx_catalog_title
             ON catalog_offers(title_folded);
+
+        CREATE TABLE IF NOT EXISTS collector_runs (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            seed_query TEXT NOT NULL,
+            marketplace TEXT NOT NULL,
+            page INTEGER NOT NULL DEFAULT 1,
+            raw INTEGER NOT NULL DEFAULT 0,
+            parsed INTEGER NOT NULL DEFAULT 0,
+            relevant INTEGER NOT NULL DEFAULT 0,
+            rejected INTEGER NOT NULL DEFAULT 0,
+            new INTEGER NOT NULL DEFAULT 0,
+            duplicates INTEGER NOT NULL DEFAULT 0,
+            has_more INTEGER NOT NULL DEFAULT 0,
+            blocked INTEGER NOT NULL DEFAULT 0,
+            latency_ms INTEGER NOT NULL DEFAULT 0,
+            walked_at REAL NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS idx_collector_seed_time
+            ON collector_runs(seed_query, walked_at DESC);
+        CREATE INDEX IF NOT EXISTS idx_collector_market_time
+            ON collector_runs(marketplace, walked_at DESC);
         """
     )
     fts = "0"
@@ -698,6 +719,155 @@ def upsert_results(results, query: str, *, path: Path | None = None, now: float 
                     ((row["offer_key"], row["search_text"]) for row in refreshed),
                 )
     return len(rows)
+
+
+def record_collector_run(*, seed_query, marketplace, page, raw=0, parsed=0, relevant=0,
+                         rejected=0, new=0, duplicates=0, has_more=False, blocked=False,
+                         latency_ms=0, path: Path | None = None, now: float | None = None) -> bool:
+    """Trace une marche source/page du collecteur (hors hot path).
+
+    `raw` = cartes rendues par le connecteur ; `parsed` = cartes normalisées
+    avec clé stable ; `relevant` = cartes acceptées (gate/catalogue) ;
+    `rejected` = parsed - relevant (rejets de pertinence) ;
+    `new` = clés réellement insérées (jamais présentes avant) ;
+    `duplicates` = parsed - new. Aucune valeur n'est inventée : tout provient
+    d'une vraie passe réseau.
+    """
+    if not index_enabled():
+        return False
+    now = float(now if now is not None else time.time())
+    with _connect(path) as conn:
+        conn.execute(
+            "INSERT INTO collector_runs(seed_query, marketplace, page, raw, parsed, relevant, "
+            "rejected, new, duplicates, has_more, blocked, latency_ms, walked_at) "
+            "VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)",
+            (str(seed_query or ""), str(marketplace or ""), int(page or 1),
+             int(raw or 0), int(parsed or 0), int(relevant or 0), int(rejected or 0),
+             int(new or 0), int(duplicates or 0), 1 if has_more else 0, 1 if blocked else 0,
+             int(latency_ms or 0), now),
+        )
+    return True
+
+
+def known_offer_keys(offer_keys, query: str, *, path: Path | None = None) -> set[str]:
+    """Sous-ensemble de clés déjà présentes (requête exacte ou catalogue).
+
+    Permet au collecteur de compter des offres réellement nouvelles par page :
+    une clé est « new » seulement si absente d'`indexed_results(query_key)` et
+    de `catalog_offers`. Une passe re-marchée ne compte jamais une annonce
+    déjà collectée comme nouvelle.
+    """
+    keys = [str(k) for k in (offer_keys or []) if k]
+    if not keys or not index_enabled():
+        return set()
+    query_key = canonical_query(query)
+    known: set[str] = set()
+    placeholders = ",".join("?" for _ in keys)
+    with _connect(path) as conn:
+        rows = conn.execute(
+            f"SELECT offer_key FROM indexed_results WHERE query_key=? AND offer_key IN ({placeholders})",
+            [query_key, *keys],
+        ).fetchall()
+        known.update(row[0] for row in rows)
+        if len(known) < len(keys):
+            remaining = [k for k in keys if k not in known]
+            rows = conn.execute(
+                f"SELECT offer_key FROM catalog_offers WHERE offer_key IN ({','.join('?' for _ in remaining)})",
+                remaining,
+            ).fetchall()
+            known.update(row[0] for row in rows)
+    return known
+
+
+def collector_stats(*, seed_query=None, marketplace=None, path: Path | None = None) -> dict:
+    """Totaux agrégés des passes du collecteur (pages, doublons, latence...)."""
+    result = {
+        "seed_query": seed_query,
+        "marketplace": marketplace,
+        "runs": 0, "pages": 0, "raw": 0, "parsed": 0, "relevant": 0,
+        "rejected": 0, "new": 0, "duplicates": 0, "blocked_pages": 0, "has_more_pages": 0,
+        "last_run_at": None, "sources": {},
+    }
+    if not index_enabled():
+        return result
+    where = ["1=1"]
+    params = []
+    if seed_query:
+        where.append("seed_query=?")
+        params.append(seed_query)
+    if marketplace:
+        where.append("marketplace=?")
+        params.append(marketplace)
+    where_sql = " AND ".join(where)
+    with _connect(path) as conn:
+        row = conn.execute(
+            f"SELECT COUNT(*) AS runs, COALESCE(SUM(raw),0) AS raw, COALESCE(SUM(parsed),0) AS parsed, "
+            f"COALESCE(SUM(relevant),0) AS relevant, COALESCE(SUM(rejected),0) AS rejected, "
+            f"COALESCE(SUM(new),0) AS new, "
+            f"COALESCE(SUM(duplicates),0) AS duplicates, COALESCE(SUM(blocked),0) AS blocked, "
+            f"COALESCE(SUM(has_more),0) AS has_more, MAX(walked_at) AS last_run_at "
+            f"FROM collector_runs WHERE {where_sql}",
+            params,
+        ).fetchone()
+        result["runs"] = int(row["runs"] or 0)
+        result["pages"] = result["runs"]
+        result["raw"] = int(row["raw"] or 0)
+        result["parsed"] = int(row["parsed"] or 0)
+        result["relevant"] = int(row["relevant"] or 0)
+        result["rejected"] = int(row["rejected"] or 0)
+        result["new"] = int(row["new"] or 0)
+        result["duplicates"] = int(row["duplicates"] or 0)
+        result["blocked_pages"] = int(row["blocked"] or 0)
+        result["has_more_pages"] = int(row["has_more"] or 0)
+        result["last_run_at"] = row["last_run_at"]
+        per_source = conn.execute(
+            f"SELECT marketplace, COUNT(*) AS runs, COALESCE(SUM(raw),0) AS raw, "
+            f"COALESCE(SUM(parsed),0) AS parsed, COALESCE(SUM(relevant),0) AS relevant, "
+            f"COALESCE(SUM(rejected),0) AS rejected, "
+            f"COALESCE(SUM(new),0) AS new, COALESCE(SUM(duplicates),0) AS duplicates, "
+            f"COALESCE(SUM(blocked),0) AS blocked, COALESCE(SUM(has_more),0) AS has_more, "
+            f"MAX(walked_at) AS last_run_at FROM collector_runs WHERE {where_sql} "
+            f"GROUP BY marketplace ORDER BY new DESC",
+            params,
+        ).fetchall()
+        result["sources"] = {r["marketplace"]: dict(r) for r in per_source}
+    return result
+
+
+def collector_has_recent(seed_query, max_age_seconds: int = 24 * 60 * 60, *, path: Path | None = None) -> bool:
+    """Vrai si une passe collector existe pour le seed dans `max_age_seconds`."""
+    if not index_enabled():
+        return False
+    now = time.time()
+    with _connect(path) as conn:
+        row = conn.execute(
+            "SELECT COUNT(*) AS n FROM collector_runs WHERE seed_query=? AND walked_at >= ?",
+            (seed_query, now - float(max_age_seconds)),
+        ).fetchone()
+        return bool(row and row["n"] > 0)
+
+
+def count_query_offers(query, *, path: Path | None = None) -> dict:
+    """Offres indexées pour une requête : table exacte, catalogue, total.
+
+    Utilisé par le benchmark avant/après du collecteur pour mesurer la
+    profondeur réelle gagnée par seed, sans jamais compter d'annonce inventée.
+    """
+    result = {"exact": 0, "catalog": 0, "catalog_total": 0}
+    if not index_enabled():
+        return result
+    query_key = canonical_query(query)
+    with _connect(path) as conn:
+        result["exact"] = int(conn.execute(
+            "SELECT COUNT(*) AS n FROM indexed_results WHERE query_key=?", (query_key,)
+        ).fetchone()["n"] or 0)
+        result["catalog"] = int(conn.execute(
+            "SELECT COUNT(*) AS n FROM catalog_offers WHERE primary_query_key=?", (query_key,)
+        ).fetchone()["n"] or 0)
+        result["catalog_total"] = int(conn.execute(
+            "SELECT COUNT(*) AS n FROM catalog_offers"
+        ).fetchone()["n"] or 0)
+    return result
 
 
 def _sort_clause(sort: str) -> str:

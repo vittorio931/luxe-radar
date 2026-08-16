@@ -1668,6 +1668,36 @@ def network_test(root: Path, query="Nike Trail", price=50, limit=10):
     ok("Test réseau terminé")
 
 
+def collect_catalogue(root: Path, seeds=None, price=None, sources="", dry_run=False,
+                      budget=None, stats=False, seed_query=""):
+    """Collecte de catalogue profond (seeds -> index + traces)."""
+    py = project_python(root)
+    args = [py, str(root / "collector.py")]
+    if stats:
+        args.append("--stats")
+        if seed_query:
+            args += ["--seed-query", seed_query]
+        res = run_command(args, cwd=root, timeout=120, capture=False)
+        if res.returncode != 0:
+            raise ManagerError("Collector stats échoué")
+        return
+    for seed in (seeds or []):
+        args += ["--seed", seed]
+    if price is not None:
+        args += ["--price", str(price)]
+    if sources:
+        args += ["--sources", sources]
+    if dry_run:
+        args.append("--dry-run")
+    if budget is not None:
+        args += ["--budget", str(budget)]
+    info(f"Collecte de catalogue profond (dry_run={dry_run})")
+    res = run_command(args, cwd=root, timeout=3600, capture=False)
+    if res.returncode != 0:
+        raise ManagerError("Collecte catalogue échouée")
+    ok("Collecte catalogue terminée")
+
+
 def doctor(root: Path):
     print(f"\n=== {APP_NAME} {APP_VERSION} ===")
     print(f"Projet : {root}")
@@ -1947,6 +1977,18 @@ def build_parser():
     p_net.add_argument("--price", type=float, default=50)
     p_net.add_argument("--limit", type=int, default=20)
 
+    p_collect = sub.add_parser(
+        "collect",
+        help="Collecte de catalogue profond (seeds -> index + traces)",
+    )
+    p_collect.add_argument("--seed", action="append", dest="seeds", help="Seed 'query|prix' (répétable).")
+    p_collect.add_argument("--price", type=float, default=None, help="Prix max par défaut.")
+    p_collect.add_argument("--sources", default="", help="Sources séparées par des virgules.")
+    p_collect.add_argument("--dry-run", action="store_true", help="Audit sans écrire index/traces.")
+    p_collect.add_argument("--budget", type=float, default=None, help="Budget secondes par seed.")
+    p_collect.add_argument("--stats", action="store_true", help="Afficher les statistiques collector.")
+    p_collect.add_argument("--seed-query", default="", help="Filtrer les stats par seed.")
+
     return parser
 
 
@@ -2012,6 +2054,17 @@ def main(argv=None):
         remove_site(root, args.name); sync_registry(root)
     elif cmd == "network-test":
         network_test(root, args.query, args.price, args.limit)
+    elif cmd == "collect":
+        collect_catalogue(
+            root,
+            seeds=args.seeds,
+            price=args.price,
+            sources=args.sources,
+            dry_run=args.dry_run,
+            budget=args.budget,
+            stats=args.stats,
+            seed_query=args.seed_query,
+        )
     else:
         parser.error(f"Commande inconnue : {cmd}")
     return 0

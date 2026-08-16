@@ -44,6 +44,15 @@ services:
         value: "250"
       - key: LUXE_RADAR_VINTED_TOTAL_SECONDS
         value: "9"
+      # Collecteur de catalogue profond (thread daemon, hors hot path).
+      # Réindexe les seeds populaires page par page dès le démarrage et après
+      # les vagues déclenchées par les utilisateurs qui approchent de la fin.
+      - key: LUXE_RADAR_COLLECTOR_ENABLED
+        value: "true"
+      - key: LUXE_RADAR_COLLECTOR_SEEDS
+        value: '[["Nike P-6000",250],["Nike Trail",250],["Nike",250],["On Cloud 5",250],["On Cloudmonster",250],["On",250],["Stone Island",300],["Adidas Samba",200],["New Balance 2002R",250],["Salomon XT-6",250]]'
+      - key: LUXE_RADAR_COLLECTOR_FRESHNESS_SECONDS
+        value: "21600"
       - key: WEB_CONCURRENCY
         value: "1"
       - key: EBAY_CLIENT_ID

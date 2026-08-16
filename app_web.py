@@ -26,6 +26,7 @@ except Exception:
     pass
 
 import billing_stripe
+import collector
 import index_engine
 import search_sessions
 
@@ -699,6 +700,17 @@ def index_status():
     return jsonify(state)
 
 
+@app.get("/api/collector/status")
+def collector_status():
+    """Panneau de statut du collecteur profond (queue, passes récentes)."""
+    try:
+        status = _collector.status()
+        status["stats"] = index_engine.collector_stats()
+        return jsonify(status)
+    except Exception as exc:  # pragma: no cover - défensif
+        return jsonify({"enabled": collector.COLLECTOR_ENABLED, "error": str(exc)[:200]})
+
+
 @app.get("/sw.js")
 def service_worker():
     response = app.send_static_file("sw.js")
@@ -732,6 +744,20 @@ _progressive_executor = ThreadPoolExecutor(
 )
 # V3.6 : écritures SQLite hors du chemin critique de la recherche.
 _index_executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="luxe-index")
+
+# V3.8 : collecteur de catalogue profond en thread daemon (hors hot path).
+# S'il meurt ou n'est pas démarré, la web app continue de servir l'index
+# déjà persisté sur disque : la lecture ne dépend jamais du collecteur.
+_collector = collector.Collector()
+
+
+def _start_collector():
+    """Démarre le collecteur une seule fois (appelé par wsgi / __main__)."""
+    try:
+        if collector.COLLECTOR_ENABLED:
+            _collector.start()
+    except Exception:  # pragma: no cover - le collecteur ne doit pas bloquer l'app
+        pass
 
 
 def _index_results_async(results, query):
@@ -1586,6 +1612,56 @@ def _public_result(item):
     return public
 
 
+def _index_spillover(entry, token_results, offset, limit, *, sort="relevance", marketplace="Toutes", price_min=None, price_max=None, price_exact=None, price_tolerance=None, exclude="", risk="all", identity="confirmed"):
+    """Suite de la pagination depuis l'index persistant quand le token est vide.
+
+    V3.8 : « tant que l'index contient de vraies offres, les pages continuent ».
+    Seules des offres réellement indexées sont servies (aucune fabrication),
+    dédupliquées contre les clés déjà affichées dans le token.
+    """
+    try:
+        query = str(entry.get("search_query") or "").strip()
+        if not query or not index_engine.index_enabled():
+            return None
+        index_total = int(entry.get("index_total") or 0)
+        if index_total <= len(token_results or []):
+            return None
+        index_offset = max(0, offset - len(token_results or []))
+        indexed = index_engine.search(
+            query,
+            price_max=entry.get("search_price") or None,
+            marketplace=marketplace,
+            identity="all",
+            risk=risk,
+            sort=sort,
+            limit=min(index_engine.query_limit(), SEARCH_RESULT_LIMIT),
+            offset=index_offset,
+        )
+        if not indexed or not indexed.results:
+            return None
+        known = {index_engine._offer_key(item) for item in (token_results or [])}
+        candidates = _sorted_results(
+            indexed.results, sort=sort, marketplace=marketplace,
+            price_min=price_min, price_max=price_max, price_exact=price_exact,
+            price_tolerance=price_tolerance, exclude=exclude, risk=risk, identity=identity,
+        )
+        fresh = [item for item in candidates if index_engine._offer_key(item) not in known]
+        if not fresh:
+            return None
+        page_items = [_public_result(item) for item in fresh[:limit]]
+        overlap = sum(1 for item in (indexed.results or [])
+                      if index_engine._offer_key(item) in known)
+        remaining_index = max(0, indexed.total - index_offset - overlap)
+        has_more = len(fresh) > len(page_items) or remaining_index > len(fresh)
+        return {
+            "results": page_items,
+            "has_more": has_more,
+            "total": len(token_results or []) + remaining_index,
+        }
+    except Exception:  # pragma: no cover - défensif, jamais sur le chemin de réponse
+        return None
+
+
 def _result_page(token, offset, limit=RESULT_BATCH_SIZE, sort="relevance", marketplace="Toutes", price_min=None, price_max=None, price_exact=None, price_tolerance=None, exclude="", risk="all", identity="confirmed", owner=None):
     offset = max(0, int(offset))
     limit = max(1, min(int(limit), MAX_BATCH_SIZE))
@@ -1598,16 +1674,29 @@ def _result_page(token, offset, limit=RESULT_BATCH_SIZE, sort="relevance", marke
         if expected_owner and not secrets.compare_digest(expected_owner, str(owner or "")):
             return None
         results = _sorted_results(entry["results"], sort=sort, marketplace=marketplace, price_min=price_min, price_max=price_max, price_exact=price_exact, price_tolerance=price_tolerance, exclude=exclude, risk=risk, identity=identity)
+        per_page = max(1, int(limit))
         page = [_public_result(item) for item in results[offset:offset + limit]]
         next_offset = offset + len(page)
-        per_page = max(1, int(limit))
+        total = len(results)
+        has_more = next_offset < total
+        if not has_more:
+            spilled = _index_spillover(
+                entry, results, offset, per_page, sort=sort, marketplace=marketplace,
+                price_min=price_min, price_max=price_max, price_exact=price_exact,
+                price_tolerance=price_tolerance, exclude=exclude, risk=risk, identity=identity,
+            )
+            if spilled is not None:
+                page = spilled["results"]
+                next_offset = offset + len(page)
+                total = spilled["total"]
+                has_more = spilled["has_more"]
         return {
             "results": page,
             "next_offset": next_offset,
-            "has_more": next_offset < len(results),
-            "total": len(results),
+            "has_more": has_more,
+            "total": total,
             "page": (offset // per_page) + 1,
-            "total_pages": max(1, (len(results) + per_page - 1) // per_page),
+            "total_pages": max(1, (total + per_page - 1) // per_page),
             "per_page": per_page,
         }
 
@@ -1990,6 +2079,33 @@ def expand_results(token):
     return jsonify(payload), status
 
 
+def _trigger_collector_wave(token, offset):
+    """Vague de fond quand l'utilisateur approche de la fin d'un token.
+
+    Ne fait rien si le collecteur est désactivé, si la requête est vide ou si
+    une collecte du même seed est récente/déjà en file (dédupe interne).
+    Best-effort hors hot path : un échec n'affecte jamais la réponse.
+    """
+    try:
+        if not collector.COLLECTOR_ENABLED:
+            return
+        with _cache_lock:
+            entry = _search_cache.get(token)
+            if entry is None:
+                return
+            query = str(entry.get("search_query") or "").strip()
+            results = entry.get("results") or []
+            total = len(results)
+            if not query or total == 0:
+                return
+            near_end = offset >= total - RESULT_BATCH_SIZE
+        if not near_end:
+            return
+        _collector.enqueue(query, entry.get("search_price"))
+    except Exception:  # pragma: no cover - jamais sur le chemin de réponse
+        pass
+
+
 @app.get("/api/results/<token>")
 def more_results(token):
     if len(token) != 32 or any(char not in "0123456789abcdef" for char in token):
@@ -2072,6 +2188,7 @@ def more_results(token):
     page = _result_page(token, offset, limit=parsed_limit, sort=sort, marketplace=marketplace, price_min=price_min, price_max=price_max, price_exact=price_exact, price_tolerance=price_tolerance, exclude=exclude, risk=risk, identity=identity, owner=session.get("csrf_token"))
     if page is None:
         return jsonify({"error": "Recherche expirée. Relance le radar."}), 404
+    _trigger_collector_wave(token, offset)
     return jsonify(page)
 
 
@@ -2533,4 +2650,5 @@ def search_share_page():
 
 
 if __name__ == "__main__":
+    _start_collector()
     app.run(debug=False, use_reloader=False, host="127.0.0.1", port=5000)

@@ -343,3 +343,52 @@ conceptuellement séparés pour la suite :
 - Une source lente ou vide ne doit jamais retarder le rendu des premiers
   résultats pertinents (le cooldown vide-lent et le preseed protègent déjà ce
   contrat en V4).
+
+## 14. Collecteur de catalogue profond (V3.8)
+
+Objectif : passer d'un catalogue "fin de la vague" à une profondeur réelle par
+source, hors hot path, sans jamais inventer d'annonce.
+
+### Architecture
+- `collector.py` : orchestrateur en thread daemon (démarré par `wsgi.py` en
+  prod et par `app_web.py` en local). S'il meurt ou n'est pas démarré, la web
+  app continue de servir l'index déjà persisté sur disque : la lecture ne
+  dépend jamais du collecteur.
+- Seeds par défaut (recherches populaires du cahier des charges) configurables
+  via `LUXE_RADAR_COLLECTOR_SEEDS` (`"query|prix"` ou JSON `[[q,prix]]`) ;
+  fraîcheur de re-collecte via `LUXE_RADAR_COLLECTOR_FRESHNESS_SECONDS`.
+- Marche par source : page 1..N en appelant directement le connecteur
+  (`search_page`), avec `page_size` profond par source (eBay 200/page car le
+  clamp du connecteur a été relevé de 100 à 200 et le pageSize API à 200 ;
+  Vinted 50 ; Zalando 100 ; retail paginé 100 ; non paginé = taille
+  `expansion_page_size`). Arrêt sur `max_pages`, sur seuil de pages vides
+  consécutives ou sur budget temps (`LUXE_RADAR_COLLECTOR_SEED_BUDGET_SECONDS`).
+- Déduplication stable : clé `offer_key` identique à l'index live, croisée
+  contre `indexed_results(query)` et `catalogue` via `known_offer_keys`.
+- Cooldowns : les sources en cooldown (source_health) sont sautées ; chaque
+  passe alimente `source_health.registry.record_outcome` pour que le vide lent
+  et les blocages soient appris exactement comme dans le chemin live.
+- Traçabilité : chaque page écrit une ligne `collector_runs` dans l'index DB
+  (raw/parsed/relevant/rejected/new/duplicates/has_more/blocked/latency).
+  `index_engine.collector_stats()` agrège ; `count_query_offers()` donne le
+  avant/après par seed pour le benchmark.
+
+### Web-app
+- `/api/collector/status` : queue, passe en cours, dernières exécutions, totaux.
+- Pagination profonde : quand un token utilisateur est épuisé mais que l'index
+  persistant a encore des offres (`index_total > len(token)`), `_result_page`
+  continue sur l'index (`_index_spillover`), dédupliqué contre les clés déjà
+  affichées.
+- Vague déclenchée par l'utilisateur : quand l'utilisateur approche de la fin
+  (`more_results`), `_trigger_collector_wave` enfile le seed courant (dédupe
+  interne de fenêtre `LUXE_RADAR_COLLECTOR_TRIGGER_WINDOW_SECONDS`).
+
+### CLI
+- `python collector.py --seed "Nike P-6000|250" --dry-run` : audit de
+  profondeur sans écrire (raw/parsed/relevant/new par page et par source).
+- `python collector.py --stats` / `manager collect --stats` : totaux.
+- `manager collect --seed "On Cloud 5|250" --sources "eBay"` : collecte réelle.
+- Sur Render, l'index n'est pas sur disque persistant (plan free) : le
+  collecteur ré-ensemence à chaque déploiement, ce qui joue le rôle de la
+  pré-indexation au démarrage. En local l'index est réellement persistant.
+
