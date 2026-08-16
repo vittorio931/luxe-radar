@@ -62,6 +62,36 @@ def _match_alias(title_fold: str, alias: str) -> bool:
     return bool(re.search(rf"(?<![a-z0-9]){re.escape(_fold(alias))}(?![a-z0-9])", title_fold))
 
 
+
+# Mod?les dont la famille produit est sans ambigu?t? dans le catalogue actuel.
+# Important : on n'exige PAS le mot "chaussures" dans le titre.
+# On rejette seulement un type explicitement incompatible.
+_FOOTWEAR_MODEL_KEYS = frozenset({
+    ("Nike", "Air Force 1"),
+    ("Nike", "P-6000"),
+    ("Adidas", "Samba"),
+    ("Salomon", "XT-6"),
+    ("On", "Cloud 5"),
+})
+
+_NON_FOOTWEAR_TYPES = frozenset({
+    "pantalon", "sweat", "t-shirt", "tee-shirt", "veste", "short",
+    "ensemble", "pull", "polo", "chemise", "cargo",
+    "casquette", "chaussettes", "gilet", "maillot", "manteau",
+    "doudoune", "jean", "jogging", "robe", "jupe", "bonnet",
+    "sac", "ceinture", "echarpe", "gants", "debardeur", "brassiere",
+})
+
+
+def _explicit_non_footwear_type(title_fold: str) -> str | None:
+    for canonical, aliases in TYPE_ALIASES.items():
+        if canonical not in _NON_FOOTWEAR_TYPES:
+            continue
+        if any(_match_alias(title_fold, alias) for alias in aliases):
+            return canonical
+    return None
+
+
 def evaluate_offer(intent_or_query, offer: dict) -> QualityResult:
     """Score [0-100] et acceptation d'une offre pour une requête.
 
@@ -116,6 +146,21 @@ def evaluate_offer(intent_or_query, offer: dict) -> QualityResult:
             score += 30.0
         elif not (intent.is_reference or intent.reference_token):
             hard_failures.append("modele exact absent")
+
+    # Un mod?le connu comme chaussure peut ?tre vendu sous un titre qui ne dit
+    # jamais "shoe/sneaker". On ne l'exige donc pas. En revanche, si le titre
+    # annonce explicitement une autre famille produit (bra, hoodie, socks...),
+    # c'est un conflit dur ? sauf si l'utilisateur a lui-m?me demand? ce type.
+    if (
+        intent.model
+        and not intent.product_type
+        and (intent.brand, intent.model) in _FOOTWEAR_MODEL_KEYS
+    ):
+        conflicting_type = _explicit_non_footwear_type(title_fold)
+        if conflicting_type:
+            hard_failures.append(
+                f"categorie contradictoire avec modele chaussure: {conflicting_type}"
+            )
 
     # --- Gamme / usage (dur) ---------------------------------------------------
     if intent.line:

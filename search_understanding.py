@@ -72,6 +72,7 @@ TYPE_ALIASES = {
     "pull": ("pull", "sweater", "pullover", "knit"),
     "polo": ("polo",),
     "chemise": ("chemise", "shirt"),
+    "brassiere": ("brassiere", "brassieres", "bra", "sports bra", "sport bra", "soutien gorge", "soutien-gorge"),
     "cargo": ("cargo",),
 }
 

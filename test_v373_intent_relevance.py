@@ -1,12 +1,12 @@
-"""V3.7.x INTENT + PERTINENCE : gate central, propriété de sous-ensemble, déterminisme.
+﻿"""V3.7.x INTENT + PERTINENCE : gate central, propriÃ©tÃ© de sous-ensemble, dÃ©terminisme.
 
-Valide les exigences "ZÉRO RÉSULTAT ALÉATOIRE" :
-- ``casquette Nike Trail`` ⊂ ``Nike Trail`` (propriété de sous-ensemble) ;
-- faux positifs rejetés : Air Force 1 pour ``Nike P-6000``, River Island pour
+Valide les exigences "ZÃ‰RO RÃ‰SULTAT ALÃ‰ATOIRE" :
+- ``casquette Nike Trail`` âŠ‚ ``Nike Trail`` (propriÃ©tÃ© de sous-ensemble) ;
+- faux positifs rejetÃ©s : Air Force 1 pour ``Nike P-6000``, River Island pour
   ``Stone Island``, ``On Running Cloudstratus`` pour ``On Cloud 5`` ;
-- faux négatifs évités : ``Nike Pegasus Trail 5`` reste pertinent pour
+- faux nÃ©gatifs Ã©vitÃ©s : ``Nike Pegasus Trail 5`` reste pertinent pour
   ``Nike Trail`` ;
-- ordre total déterministe : deux bases identiques => même classement.
+- ordre total dÃ©terministe : deux bases identiques => mÃªme classement.
 """
 
 from pathlib import Path
@@ -59,15 +59,23 @@ with tempfile.TemporaryDirectory() as tmp:
         ('casquette Nike Trail', 'Nike Trail running shoe', False),
         ('casquette Nike Trail', 'Nike Pegasus Trail 5 chaussures', False),
         ('Stone Island', 'River Island stone trousers', False),
-        ('Stone Island', 'Stone Island veste modèle 42', True),
+        ('Stone Island', 'Stone Island veste modÃ¨le 42', True),
         ('On Cloud 5', 'On Cloud 5 Waterproof', True),
         ('On Cloud 5', 'On Running Cloudstratus', False),
+
+        # V3.7.5 : un mod?le chaussure ne doit pas accepter un v?tement
+        # uniquement parce que le nom du mod?le appara?t dans le titre.
+        ('Air Force 1', "Nike Air Force 1 '07", True),
+        ('Air Force 1', "Nike Swoosh Women's Air Force 1 Sports Bra", False),
+        ('Samba', 'adidas Samba Hoodie', False),
+        ('XT-6', 'Salomon XT-6 Jacket', False),
+        ('P-6000', 'Nike P-6000 Socks', False),
     ]
     for query, titre, want in cases:
         got = evaluate_offer(query, offer(titre, query)).accepted
         assert got is want, f'GATE {query!r} / {titre!r}: attendu {want}, obtenu {got}'
 
-    # --- Intent parsée : dimensions correctes ----------------------------------
+    # --- Intent parsÃ©e : dimensions correctes ----------------------------------
     intent = parse_search_intent('casquette Nike Trail')
     assert (intent.brand, intent.line, intent.product_type) == ('Nike', 'trail', 'casquette'), intent
     intent = parse_search_intent('Nike P-6000')
@@ -86,11 +94,11 @@ with tempfile.TemporaryDirectory() as tmp:
     assert len(broad_keys) == 4, f'attendu 4, obtenu {len(broad_keys)}'
     narrow = index_engine.search('casquette Nike Trail', path=db, limit=500)
     narrow_keys = _keys(narrow.results)
-    assert set(narrow_keys) <= set(broad_keys), 'sous-ensemble cassé'
+    assert set(narrow_keys) <= set(broad_keys), 'sous-ensemble cassÃ©'
     expected_narrow = {str(broad[0]['lien']), str(broad[3]['lien'])}
     assert set(narrow_keys) == expected_narrow, f'casquettes attendues, obtenu {narrow_keys}'
 
-    # --- Faux positifs rejetés AU TEMPS DE LA RECHERCHE (lignes exact-query) ---
+    # --- Faux positifs rejetÃ©s AU TEMPS DE LA RECHERCHE (lignes exact-query) ---
     db2 = base / 'fp.sqlite3'
     _upsert(db2, [
         ('Nike P-6000', [offer('Nike Air Force 1', 'Nike P-6000', i=0)]),
@@ -98,24 +106,29 @@ with tempfile.TemporaryDirectory() as tmp:
         ('casquette Nike', [offer('Nike Air Force 1', 'casquette Nike', i=2)]),
         ('On Cloud 5', [offer('On Running Cloudstratus', 'On Cloud 5', i=3)]),
         ('casquette Nike Trail', [offer('Nike Pegasus Trail 5 chaussures', 'casquette Nike Trail', i=4)]),
+        ('Air Force 1', [offer("Nike Swoosh Women's Air Force 1 Sports Bra", 'Air Force 1', i=5)]),
     ])
     assert index_engine.search('Nike P-6000', path=db2).total == 0
     assert index_engine.search('Stone Island', path=db2).total == 0
     assert index_engine.search('casquette Nike', path=db2).total == 0
     assert index_engine.search('On Cloud 5', path=db2).total == 0
     assert index_engine.search('casquette Nike Trail', path=db2).total == 0
+    air_force_results = index_engine.search('Air Force 1', path=db2, limit=500).results
+    air_force_titles = [str(item.get('titre') or '') for item in air_force_results]
+    assert air_force_results, 'les vraies Air Force 1 doivent rester visibles'
+    assert not any('sports bra' in title.casefold() for title in air_force_titles), air_force_titles
 
-    # --- Faux négatifs évités : l'offre pertinente reste visible ----------------
+    # --- Faux nÃ©gatifs Ã©vitÃ©s : l'offre pertinente reste visible ----------------
     db3 = base / 'fn.sqlite3'
     _upsert(db3, [('Nike Trail', [offer('Nike ReactX Pegasus Trail 5', 'Nike Trail', i=0, price=140.0)])])
     assert index_engine.search('Nike Trail', path=db3).total == 1
 
-    # --- Référence produit : pas de rejet abusif --------------------------------
+    # --- RÃ©fÃ©rence produit : pas de rejet abusif --------------------------------
     db4 = base / 'ref.sqlite3'
     _upsert(db4, [('DM4652-040', [offer('Nike Dunk Low DM4652 040', 'DM4652-040', i=0)])])
     assert index_engine.search('DM4652-040', path=db4).total == 1
 
-    # --- Déterminisme : deux bases identiques => même ordre ---------------------
+    # --- DÃ©terminisme : deux bases identiques => mÃªme ordre ---------------------
     def build_db(root):
         d = root / 'det.sqlite3'
         rows = [
@@ -132,9 +145,9 @@ with tempfile.TemporaryDirectory() as tmp:
     for q in ('Nike Trail', 'Nike P-6000', 'casquette Nike Trail'):
         seq_a = [str(r.get('lien')) for r in index_engine.search(q, path=d_a, limit=500).results]
         seq_b = [str(r.get('lien')) for r in index_engine.search(q, path=d_b, limit=500).results]
-        assert seq_a == seq_b, f'ordre non déterministe pour {q!r}'
+        assert seq_a == seq_b, f'ordre non dÃ©terministe pour {q!r}'
 
-# Modèles connus recherchés sans marque : inférence exacte et non ambiguë.
+# ModÃ¨les connus recherchÃ©s sans marque : infÃ©rence exacte et non ambiguÃ«.
 for raw, expected_brand, expected_model in (
     ("Air Force 1", "Nike", "Air Force 1"),
     ("Samba", "Adidas", "Samba"),
@@ -146,14 +159,14 @@ for raw, expected_brand, expected_model in (
     assert inferred.model == expected_model, (raw, inferred)
     assert inferred.is_reference is False, (raw, inferred)
 
-# Ne pas transformer un type/gamme générique ou une vraie référence en modèle.
+# Ne pas transformer un type/gamme gÃ©nÃ©rique ou une vraie rÃ©fÃ©rence en modÃ¨le.
 assert parse_search_intent("polo").brand is None
 assert parse_search_intent("Trail").brand is None
 assert parse_search_intent("DM4652-040").is_reference is True
 
-# Le chemin live (radar_engine/product_recognition) doit partager la même
-# compréhension que SearchIntent. C'était la source du bug où ``Air Force 1``
-# était correctement compris dans le résumé de recherche mais rejeté à 38/100
+# Le chemin live (radar_engine/product_recognition) doit partager la mÃªme
+# comprÃ©hension que SearchIntent. C'Ã©tait la source du bug oÃ¹ ``Air Force 1``
+# Ã©tait correctement compris dans le rÃ©sumÃ© de recherche mais rejetÃ© Ã  38/100
 # par ASOS/Zalando/eBay/Courir.
 for raw, expected_brand, expected_model, good_title, bad_title in (
     ("Air Force 1", "Nike", "Air Force 1", "Nike Air Force 1 '07 Sneakers", "Nike Air Zoom Victory 2"),
@@ -168,12 +181,13 @@ for raw, expected_brand, expected_model, good_title, bad_title in (
     bad = recognize_product(raw, bad_title, marketplace="eBay")
     assert not bad.accepted, (raw, bad)
 
-# Les termes génériques et vraies références ne doivent toujours pas être
-# transformés en marque/modèle par le moteur live.
+# Les termes gÃ©nÃ©riques et vraies rÃ©fÃ©rences ne doivent toujours pas Ãªtre
+# transformÃ©s en marque/modÃ¨le par le moteur live.
 assert build_query_profile("Trail").brand is None
 assert build_query_profile("Trail").model is None
 assert build_query_profile("polo").brand is None
 assert build_query_profile("DM4652-040").brand is None
 assert build_query_profile("DM4652-040").model is None
 
-print('OK - V3.7.4 INTENT + PERTINENCE: gate 13 cas + modèles sans marque cohérents index/live, références et déterminisme validés.')
+print('OK - V3.7.5 INTENT + PERTINENCE: gate 18 cas + modÃ¨les sans marque cohÃ©rents index/live, rÃ©fÃ©rences et dÃ©terminisme validÃ©s.')
+

@@ -64,6 +64,7 @@ _EXTRA_TYPE_ALIASES = {
     "echarpe": ("echarpe", "echarpes", "scarf", "scarves", "snood"),
     "gants": ("gant", "gants", "glove", "gloves"),
     "debardeur": ("debardeur", "debardeurs", "tank top", "tanktop", "singlet"),
+    "brassiere": ("brassiere", "brassieres", "bra", "sports bra", "sport bra", "soutien gorge", "soutien-gorge"),
     "baskets": ("basket", "baskets", "sneaker", "sneakers", "trainers"),
     "chaussures": ("chaussure", "chaussures", "shoe", "shoes", "running shoe", "running shoes"),
     "tee-shirt": ("t shirt", "tshirt", "tee shirt", "tee", "t-shirts"),
