@@ -60,6 +60,18 @@ _TITLE_RE = re.compile(r'<(?:h2|h3|h4)[^>]*>(.*?)</(?:h2|h3|h4)>', re.I | re.S)
 _ALT_RE = re.compile(r'<img[^>]+alt=["\']([^"\']+)["\']', re.I | re.S)
 _BLOCK_RE = re.compile(r'<(?:article|li)\b[^>]*>(.*?)</(?:article|li)>', re.I | re.S)
 _TAG_RE = re.compile(r"<[^>]+>")
+_DIV_OPEN_RE = re.compile(r"<div\b[^>]*>", re.I)
+_DIV_CLOSE_RE = re.compile(r"</div\s*>", re.I)
+_DIV_CARD_MARKERS = (
+    "product-card",
+    "product_card",
+    "tp-product-card",
+    "productcard",
+    "product-tile",
+    "product-item",
+)
+_DATA_NAME_RE = re.compile(r'data-(?:cnstrc|tp-gtm)-item-name="([^"]*)"', re.I)
+_DATA_PRICE_RE = re.compile(r'data-(?:cnstrc|tp-gtm)-item-price="([0-9.,]+)"', re.I)
 
 
 def _norm(value):
@@ -271,6 +283,106 @@ def parse_html_cards(text, base_url, allowed_path_hints=()):
     return results
 
 
+def _balanced_div_block(text, start):
+    """Fin du <div> ouvert à `start` (index du '<div'), en comptant l'imbrication."""
+    length = len(text)
+    limit = min(length, start + 40000)
+    i = start
+    depth = 0
+    while i < limit:
+        open_match = _DIV_OPEN_RE.search(text, i, limit)
+        close_match = _DIV_CLOSE_RE.search(text, i, limit)
+        if close_match is None:
+            return limit
+        if open_match is not None and open_match.start() < close_match.start():
+            depth += 1
+            i = open_match.end()
+        else:
+            depth -= 1
+            i = close_match.end()
+            if depth == 0:
+                return i
+    return limit
+
+
+def parse_product_div_cards(text, base_url, allowed_path_hints=()):
+    """Cartes produit encodées en <div> (Shopify/React/Magento sans JSON-LD).
+
+    Conservateur : on ne produit une carte que si le bloc contient un lien
+    produit + un titre + un prix EUR, sinon elle est rejetée.
+    """
+    host = urlparse(base_url).netloc.casefold().removeprefix("www.")
+    results = []
+    seen = set()
+    text = text or ""
+    for match in _DIV_OPEN_RE.finditer(text):
+        tag = match.group(0)
+        class_match = re.search(r'class=["\']([^"\']*)["\']', tag, re.I)
+        class_name = (class_match.group(1) or "").casefold() if class_match else ""
+        if not any(marker in class_name for marker in _DIV_CARD_MARKERS):
+            continue
+        end = _balanced_div_block(text, match.start())
+        block = text[match.end():end]
+        full = tag + block
+        price = None
+        data_price = _DATA_PRICE_RE.search(full)
+        if data_price:
+            price = _safe_float(data_price.group(1))
+        if price is None:
+            price_match = _PRICE_RE.search(_clean_html_text(block))
+            if price_match:
+                price = _safe_float(price_match.group(1))
+        if price is None or price <= 0:
+            continue
+        href = None
+        for href_match in _HREF_RE.finditer(block):
+            candidate = urljoin(base_url, html_lib.unescape(href_match.group(1)).strip())
+            parsed = urlparse(candidate)
+            item_host = parsed.netloc.casefold().removeprefix("www.")
+            if not item_host or (item_host != host and not item_host.endswith("." + host)):
+                continue
+            if allowed_path_hints and not any(hint in parsed.path.casefold() for hint in allowed_path_hints):
+                continue
+            href = candidate
+            break
+        if not href:
+            continue
+        title = ""
+        name_match = _DATA_NAME_RE.search(full)
+        if name_match:
+            title = " ".join(html_lib.unescape(name_match.group(1)).split())
+        if not title:
+            anchor = re.search(r'<a\b[^>]*title="([^"]*)"', block, re.I)
+            if anchor:
+                title = " ".join(html_lib.unescape(anchor.group(1)).split())
+        if not title:
+            heading = _TITLE_RE.search(block)
+            if heading:
+                title = _clean_html_text(heading.group(1))
+        if not title:
+            alt_match = _ALT_RE.search(block)
+            if alt_match:
+                title = " ".join(html_lib.unescape(alt_match.group(1)).split())
+        if not title or len(title) < 4:
+            continue
+        img_match = _IMG_RE.search(block)
+        image = urljoin(base_url, html_lib.unescape(img_match.group(1))) if img_match else None
+        key = (href, round(price, 2))
+        if key in seen:
+            continue
+        seen.add(key)
+        results.append({
+            "titre": title,
+            "prix": round(price, 2),
+            "devise_originale": "EUR",
+            "image": image,
+            "lien": href,
+            "reference": None,
+            "disponible": True,
+        })
+    return results
+
+
 class _PublicRetailBase(MarketplaceConnector):
     name = "Marketplace"  # ignoré par l'auto-loader
     display_name = "Marketplace"
@@ -371,6 +483,8 @@ class _PublicRetailBase(MarketplaceConnector):
                 raw = parse_jsonld_products(text, self.base_url)
                 if not raw:
                     raw = parse_html_cards(text, self.base_url, self.allowed_path_hints)
+                if not raw:
+                    raw = parse_product_div_cards(text, self.base_url, self.allowed_path_hints)
                 print(
                     f"[{self.name}][ROUTE {route_index}] "
                     f"page={page} cartes_parsées={len(raw)} "
@@ -471,10 +585,12 @@ class IRunConnector(_PublicRetailBase):
     name = "i-Run"
     display_name = "i-Run"
     base_url = "https://www.i-run.fr"
+    # V4.2 : la route ?q= fonctionne (200, 60 cartes) ; ?search= mène vers une
+    # redirection hors domaine. On la garde en dernier recours seulement.
     search_templates = (
-        "https://www.i-run.fr/recherche.html?search={q}&page={page}",
         "https://www.i-run.fr/recherche.html?q={q}&page={page}",
         "https://www.i-run.fr/recherche.html?keywords={q}&page={page}",
+        "https://www.i-run.fr/recherche.html?search={q}&page={page}",
     )
     allowed_path_hints = ("/chaussures", "/vetements", "/running", "/trail", ".html")
 
@@ -494,9 +610,11 @@ class AlltricksConnector(_PublicRetailBase):
     name = "Alltricks"
     display_name = "Alltricks"
     base_url = "https://www.alltricks.fr"
+    # V4.2 : /search?q= renvoyait 403 ; la route réelle du formulaire est
+    # /search?s= (200, cartes en <div class="productCard" ...>).
     search_templates = (
-        "https://www.alltricks.fr/search?q={q}&page={page}",
-        "https://www.alltricks.fr/recherche?q={q}&page={page}",
+        "https://www.alltricks.fr/search?s={q}&page={page}",
+        "https://www.alltricks.fr/recherche?s={q}&page={page}",
     )
     allowed_path_hints = ("/running", "/chauss", "/vetement", "/product", "/produit", "/p-")
 
@@ -505,11 +623,14 @@ class DeporvillageConnector(_PublicRetailBase):
     name = "Deporvillage"
     display_name = "Deporvillage"
     base_url = "https://www.deporvillage.fr"
+    # V4.2 : /search et /recherche renvoyaient 404 ; la vraie route Magento est
+    # /catalogsearch/result?q= (200, cartes en <div data-testid="product-card">).
+    # Les URLs produits sont des slugs sans préfixe stable : la garde titre+prix+lien
+    # du parseur de cartes <div> suffit, pas de hint de chemin ici.
     search_templates = (
-        "https://www.deporvillage.fr/search?q={q}&page={page}",
-        "https://www.deporvillage.fr/recherche?q={q}&page={page}",
+        "https://www.deporvillage.fr/catalogsearch/result?q={q}&page={page}",
     )
-    allowed_path_hints = ("/chauss", "/vetement", "/running", "/trail", "/product", "/produit")
+    allowed_path_hints = ()
 
 
 class RunningPointConnector(_PublicRetailBase):
