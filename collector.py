@@ -483,6 +483,7 @@ class Collector:
             in_flight = self._in_flight
         return {
             "enabled": COLLECTOR_ENABLED,
+            "pid": os.getpid(),
             "running": bool(self._thread is not None and self._thread.is_alive()),
             "busy": in_flight is not None,
             "in_flight": {"query": in_flight[0], "price_max": in_flight[1]} if in_flight else None,

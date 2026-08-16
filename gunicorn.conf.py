@@ -2,8 +2,14 @@ import os
 
 
 bind = f"0.0.0.0:{os.environ.get('PORT', '8000')}"
+# Worker UNIQUE : le collecteur de catalogue (thread daemon) est un singleton
+# par process. Avec plusieurs workers, chaque process a son propre collecteur :
+# un seul marche (l'index SQLite est partagé), les autres affichent
+# running=false et perdent les vagues déclenchées (pagination profonde vide).
+# On lit WEB_CONCURRENCY (défaut "1" = config souhaitée) mais on plafonne à 1
+# pour verrouiller le comportement même si l'environnement injecte une valeur.
 try:
-    workers = max(1, min(4, int(os.environ.get("WEB_CONCURRENCY", "1"))))
+    workers = max(1, min(1, int(os.environ.get("WEB_CONCURRENCY", "1"))))
 except ValueError:
     workers = 1
 worker_class = "gthread"
