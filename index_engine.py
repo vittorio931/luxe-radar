@@ -523,6 +523,13 @@ def _ensure_schema(conn: sqlite3.Connection) -> None:
             ON collector_runs(seed_query, walked_at DESC);
         CREATE INDEX IF NOT EXISTS idx_collector_market_time
             ON collector_runs(marketplace, walked_at DESC);
+
+        CREATE TABLE IF NOT EXISTS collector_pending (
+            seed_query TEXT PRIMARY KEY,
+            folded TEXT NOT NULL,
+            price_max REAL,
+            created_at REAL NOT NULL
+        );
         """
     )
     fts = "0"
@@ -535,6 +542,21 @@ def _ensure_schema(conn: sqlite3.Connection) -> None:
     except sqlite3.OperationalError:
         # Some minimal SQLite builds omit FTS5. LIKE fallback remains correct.
         fts = "0"
+
+    # V3.8 : table collector_pending (vagues) avec colonne folded. Une base
+    # antérieure n'a pas la colonne ni l'index : ALTER défensif puis index
+    # unique replié (dédoublonnage canonical_query des vagues en attente).
+    try:
+        conn.execute("ALTER TABLE collector_pending ADD COLUMN folded TEXT")
+    except sqlite3.OperationalError:
+        pass  # colonne déjà présente (base neuve)
+    try:
+        conn.execute("UPDATE collector_pending SET folded=seed_query WHERE folded IS NULL OR folded=''")
+        conn.execute(
+            "CREATE UNIQUE INDEX IF NOT EXISTS idx_pending_folded ON collector_pending(folded)"
+        )
+    except sqlite3.OperationalError:
+        pass
 
     # One-time V3.6 -> V3.7 migration: reuse already warmed exact-query rows
     # instead of asking the user to rebuild Stone Island/Nike/etc. from zero.
@@ -892,6 +914,61 @@ def recent_collector_runs(limit: int = 8, *, path: Path | None = None) -> list[d
         }
         for r in rows
     ]
+
+
+def queue_collector_trigger(seed_query: str, price_max=None, *, path: Path | None = None) -> bool:
+    """Persiste un déclencheur de vague dans la base (partagée entre process).
+
+    En multi-workers, le process qui reçoit la requête web n'est pas forcément
+    celui dont le thread collecteur marche : une file en mémoire y serait
+    perdue. La table collector_pending garantit qu'un process vivant absorbera
+    la vague (drain_collector_triggers). Retourne True si inséré, False si déjà
+    en attente (dédupliqué).
+    """
+    query = str(seed_query or "").strip()
+    if not query or not index_enabled():
+        return False
+    try:
+        price_max = float(price_max) if price_max not in (None, "") else None
+        if price_max is not None and price_max <= 0:
+            price_max = None
+    except (TypeError, ValueError):
+        price_max = None
+    with _connect(path) as conn:
+        try:
+            cur = conn.execute(
+                "INSERT OR IGNORE INTO collector_pending(seed_query, folded, price_max, created_at) "
+                "VALUES(?,?,?,?)",
+                (query, canonical_query(query), price_max, time.time()),
+            )
+        except sqlite3.OperationalError as exc:
+            if "locked" in str(exc).lower():
+                return False
+            raise
+        return bool(cur.rowcount and cur.rowcount > 0)
+
+
+def drain_collector_triggers(limit: int = 20, *, path: Path | None = None) -> list[tuple[str, float]]:
+    """Absorbe atomiquement les déclencheurs en attente (une fois par vague).
+
+    SELECT puis DELETE dans la même transaction : chaque vague est livrée à
+    exactement un process (au pire un doublon si deux process la volent).
+    """
+    if not index_enabled():
+        return []
+    limit = max(1, min(int(limit or 20), 100))
+    with _connect(path) as conn:
+        rows = conn.execute(
+            "SELECT seed_query, price_max FROM collector_pending ORDER BY created_at ASC LIMIT ?",
+            (limit,),
+        ).fetchall()
+        if not rows:
+            return []
+        conn.executemany(
+            "DELETE FROM collector_pending WHERE seed_query=?",
+            [(r["seed_query"],) for r in rows],
+        )
+        return [(str(r["seed_query"]), r["price_max"]) for r in rows]
 
 
 def count_query_offers(query, *, path: Path | None = None) -> dict:

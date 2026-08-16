@@ -193,8 +193,10 @@ def test_enqueue_dedupe():
         assert engine.enqueue("Nike P-6000", 250) is True
         assert engine.enqueue("nike  p-6000 ", 250) is False  # même seed replié
         assert engine.enqueue("On Cloud 5", 250) is True
-        status = engine.status()
-        assert len(status["queue"]) == 2
+        assert engine.enqueue("Nike P-6000", 250) is False  # encore en attente
+        pending = index_engine.drain_collector_triggers(20, path=db)
+        assert sorted(q for q, _p in pending) == ["Nike P-6000", "On Cloud 5"]
+        assert index_engine.drain_collector_triggers(20, path=db) == []
 
 
 def test_parse_seeds_env():
@@ -366,6 +368,20 @@ def test_recent_runs_shared_via_db():
         ebay = next(r for r in runs if r["marketplace"] == "eBay")
         assert ebay["new"] == 8 and ebay["relevant"] == 8 and ebay["latency_ms"] == 900
         assert runs == sorted(runs, key=lambda r: r["walked_at"], reverse=True)
+
+
+def test_wave_cross_process_delivery():
+    """Multi-workers : la vague enqueuee par le process serveur (meme si son
+    thread est mort) doit etre absorbee par le process qui marche."""
+    with _with_index_db() as db:
+        server = collector.Collector(path=db)
+        walker = collector.Collector(path=db)
+        assert server.enqueue("Nike Air Max", 180) is True
+        assert server.enqueue("Stone Island", 300) is True
+        assert walker._absorb_pending() == 2
+        assert sorted(q for q, _p in walker._queue) == ["Nike Air Max", "Stone Island"]
+        assert walker._absorb_pending() == 0
+        assert index_engine.drain_collector_triggers(20, path=db) == []
 
 
 def _main():

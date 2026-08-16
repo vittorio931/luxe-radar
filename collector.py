@@ -451,7 +451,13 @@ class Collector:
         self._stop.set()
 
     def enqueue(self, query, price_max=None):
-        """Déclencheur : collecte un seed sans re-collecter en boucle."""
+        """Déclencheur : collecte un seed sans re-collecter en boucle.
+
+        Vague persistée dans la base (table collector_pending) : en
+        multi-workers le process qui reçoit la requête n'est pas forcément
+        celui qui marche, et un thread mort ne doit pas faire perdre la vague.
+        Retourne True si la vague a été acceptée (nouvelle).
+        """
         query = str(query or "").strip()
         if not query:
             return False
@@ -465,16 +471,25 @@ class Collector:
         # jamais attendre derrière une passe du collecteur (voir V3.8 prod).
         if index_engine.collector_has_recent(query, COLLECTOR_TRIGGER_WINDOW_SECONDS, path=self._path):
             return False
+        return index_engine.queue_collector_trigger(query, price_max, path=self._path)
+
+    def _absorb_pending(self, limit: int = 20):
+        """Absorbe les vagues persistées dans la file locale (dédupliquées)."""
+        try:
+            pending = index_engine.drain_collector_triggers(limit, path=self._path)
+        except Exception:  # noqa: BLE001 - une vague perdue n'est pas fatale
+            return 0
+        added = 0
         with self._lock:
-            folded = index_engine.canonical_query(query)
-            if self._in_flight and index_engine.canonical_query(self._in_flight[0]) == folded:
-                return False
-            for q, _price in self._queue:
-                if index_engine.canonical_query(q) == folded:
-                    return False
-            self._queue.append((query, price_max))
-            self._last_trigger_sweep = time()
-            return True
+            for q, p in pending:
+                folded = index_engine.canonical_query(q)
+                if self._in_flight and index_engine.canonical_query(self._in_flight[0]) == folded:
+                    continue
+                if any(index_engine.canonical_query(x[0]) == folded for x in self._queue):
+                    continue
+                self._queue.append((q, p))
+                added += 1
+        return added
 
     def status(self) -> dict:
         with self._lock:
@@ -554,6 +569,8 @@ class Collector:
     def _loop(self):
         while not self._stop.is_set():
             try:
+                if not self._queue:
+                    self._absorb_pending()
                 job = self._dequeue()
                 if job is None:
                     if self._refill_defaults() == 0:
