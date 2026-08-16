@@ -530,6 +530,12 @@ def _ensure_schema(conn: sqlite3.Connection) -> None:
             price_max REAL,
             created_at REAL NOT NULL
         );
+
+        CREATE TABLE IF NOT EXISTS collector_diag (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            ts REAL NOT NULL,
+            message TEXT NOT NULL
+        );
         """
     )
     fts = "0"
@@ -914,6 +920,36 @@ def recent_collector_runs(limit: int = 8, *, path: Path | None = None) -> list[d
         }
         for r in rows
     ]
+
+
+def collector_diag_write(message: str, *, path: Path | None = None) -> bool:
+    """Trace diagnostique partagée entre process (boot walker, sortie thread)."""
+    if not index_enabled():
+        return False
+    try:
+        with _connect(path) as conn:
+            conn.execute(
+                "INSERT INTO collector_diag(ts, message) VALUES(?,?)",
+                (time.time(), str(message or "")[:400]),
+            )
+        return True
+    except Exception:  # noqa: BLE001 - le diagnostic ne doit jamais casser l'app
+        return False
+
+
+def collector_diag_read(limit: int = 12, *, path: Path | None = None) -> list[dict]:
+    if not index_enabled():
+        return []
+    limit = max(1, min(int(limit or 12), 30))
+    try:
+        with _connect(path) as conn:
+            rows = conn.execute(
+                "SELECT ts, message FROM collector_diag ORDER BY id DESC LIMIT ?",
+                (limit,),
+            ).fetchall()
+    except Exception:  # noqa: BLE001
+        return []
+    return [{"ts": float(r["ts"]), "message": str(r["message"])} for r in rows]
 
 
 def queue_collector_trigger(seed_query: str, price_max=None, *, path: Path | None = None) -> bool:

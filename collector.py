@@ -507,11 +507,15 @@ class Collector:
         lock = _try_lock_file(self._lock_path())
         if lock is not _LOCK_UNSUPPORTED and lock is None:
             self._walker = False
+            index_engine.collector_diag_write(
+                f"boot pid={os.getpid()} walker=False (verrou tenu par un autre process)", path=self._path)
             return
         self._walker = True
         self._lock_handle = lock if lock is not _LOCK_UNSUPPORTED else None
         self._stop.clear()
         self._thread = Thread(target=self._loop, name="luxe-radar-collector", daemon=True)
+        index_engine.collector_diag_write(
+            f"boot pid={os.getpid()} walker=True lock={'ok' if self._lock_handle else 'unsupported'}", path=self._path)
         self._thread.start()
 
     def stop(self):
@@ -582,6 +586,7 @@ class Collector:
                 recent_out = index_engine.recent_collector_runs(8, path=self._path)
             except Exception:  # noqa: BLE001
                 recent_out = []
+        diag = index_engine.collector_diag_read(12, path=self._path)
         return {
             "enabled": COLLECTOR_ENABLED,
             "pid": os.getpid(),
@@ -592,6 +597,7 @@ class Collector:
             "in_flight": {"query": in_flight[0], "price_max": in_flight[1]} if in_flight else None,
             "queue": queue,
             "recent_runs": recent_out[-8:],
+            "diag": diag,
             "freshness_seconds": COLLECTOR_FRESHNESS_SECONDS,
         }
 
@@ -635,6 +641,17 @@ class Collector:
                 self._recent_runs = self._recent_runs[-20:]
 
     def _loop(self):
+        try:
+            self._loop_body()
+        except BaseException:  # noqa: BLE001 - trace le motif RÉEL de mort du thread
+            import traceback
+            try:
+                index_engine.collector_diag_write(
+                    "loop_exit: " + traceback.format_exc()[:400], path=self._path)
+            except Exception:  # noqa: BLE001
+                pass
+
+    def _loop_body(self):
         while not self._stop.is_set():
             try:
                 if not self._queue:

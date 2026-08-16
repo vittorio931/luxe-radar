@@ -402,6 +402,15 @@ def test_single_walker_across_collectors():
             second.stop()
 
 
+def test_collector_diag_write_read():
+    """Les traces diagnostiques du collecteur sont partagees entre process."""
+    with _with_index_db() as db:
+        assert index_engine.collector_diag_write("boot pid=1 walker=True", path=db) is True
+        rows = index_engine.collector_diag_read(10, path=db)
+        assert len(rows) == 1
+        assert rows[0]["message"] == "boot pid=1 walker=True"
+
+
 def _main():
     import sys
     tests = [value for key, value in sorted(globals().items()) if key.startswith("test_") and callable(value)]
