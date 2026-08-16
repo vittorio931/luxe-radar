@@ -43,6 +43,11 @@ def _grailed_mark_blocked(reason=""):
     global _COOLDOWN_UNTIL
     if time.time() >= _COOLDOWN_UNTIL:
         _COOLDOWN_UNTIL = time.time() + _COOLDOWN_SECONDS
+        try:
+            from ..source_health import registry as _source_health
+            _source_health.record_blocked("Grailed", "challenge/refus observe")
+        except Exception:
+            pass
         print(
             f"[Grailed] Blocage détecté ({reason}) : mise en pause "
             f"{_COOLDOWN_SECONDS}s pour ne pas insister"

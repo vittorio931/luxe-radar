@@ -329,6 +329,11 @@ class ZalandoConnector(MarketplaceConnector):
                         _CIRCUIT_BLOCK_SECONDS,
                         f"HTTP {response.status_code}",
                     )
+                    try:
+                        from ..source_health import registry as _source_health
+                        _source_health.record_http("Zalando", response.status_code)
+                    except Exception:
+                        pass
                     print(
                         "[Zalando] blocage détecté -> pause temporaire, aucun contournement"
                     )

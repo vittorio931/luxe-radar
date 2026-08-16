@@ -1,0 +1,304 @@
+"""Registre de sante des sources, conscient de l'environnement.
+
+But : decider de l'ordonnancement des recherches progressives SANS contourner
+aucune protection. Une source en cooldown ou bloquee pour l'environnement
+courant est simplement omise des vagues : aucun worker consomme, aucun appel
+reseau repete, aucune promesse de resultats non tenue.
+
+Architecture volontairement generique :
+- l'environnement est une chaine courte ("render" = datacenter heberge,
+  "local" = poste/self-hosted) derivee des variables reelles, extensible ;
+- chaque reglage (durees de cooldown, seuils) depend de l'environnement ;
+- les mesures restent en memoire de processus (single worker Gunicorn),
+  suffisant pour un service a instance unique.
+
+Les connecteurs signalent les blocages observes (403/429/challenge) via
+`record_http` / `record_blocked`. L'orchestrateur (app_web) enregistre les
+resultats observes (`record_outcome`) puis ne re-planifie pas ce qui est en
+cooldown.
+"""
+from __future__ import annotations
+
+import os
+import statistics
+import threading
+import time
+from collections import deque
+
+_ENV_ALIASES = {
+    "production": "render",
+    "prod": "render",
+    "hosted": "render",
+    "selfhosted": "local",
+    "desktop": "local",
+    "dev": "local",
+    "development": "local",
+    "local": "local",
+}
+
+
+def current_environment():
+    """Environnement courant : "render" ou "local" par defaut."""
+    raw = (os.environ.get("LUXE_RADAR_ENV") or "").strip().lower()
+    if not raw:
+        raw = (
+            "render"
+            if (
+                os.environ.get("RENDER")
+                or os.environ.get("RENDER_SERVICE_ID")
+                or os.environ.get("RENDER_EXTERNAL_HOSTNAME")
+            )
+            else "local"
+        )
+    return _ENV_ALIASES.get(raw, "local")
+
+
+_ENV = current_environment()
+_IS_DATACENTER = _ENV == "render"
+
+# Durees de cooldown : longues pour un datacenter (egress souvent bloque par
+# les marchands), courtes en local pour re-tester vite apres une reprise.
+COOLDOWN_BLOCKED_SECONDS = 600 if _IS_DATACENTER else 90
+COOLDOWN_EMPTY_SECONDS = 300 if _IS_DATACENTER else 60
+COOLDOWN_TIMEOUT_SECONDS = 120 if _IS_DATACENTER else 30
+
+# Une source vide ET lente (temps reseau significatif) est probablement bloquee
+# ou indisponible pour cet environnement : on arrete d'y consacrer des workers.
+EMPTY_SLOW_SECONDS = 4.0
+CONSECUTIVE_EMPTY_TO_DEPRIORITIZE = 2
+CONSECUTIVE_FAILURES_TO_COOLDOWN = 2
+
+BLOCKED_HTTP_STATUSES = {400, 403, 407, 429}
+
+STATUS_ACTIVE = "active"
+STATUS_PARTIAL = "partial"
+STATUS_BLOCKED = "blocked"
+STATUS_TEMP_UNAVAILABLE = "temporarily_unavailable"
+STATUS_UNKNOWN = "unknown"
+
+# Poids d'ordonnancement (plus petit = plus tot dans la vague).
+_TIER_A_BONUS = 50
+_TIER_C_PENALTY = 60
+
+
+class _SourceHealthEntry:
+    def __init__(self, name):
+        self.name = name
+        self.last_http_status = None
+        self.last_success_at = None
+        self.last_failure_at = None
+        self.cooldown_until = 0.0
+        self.cooldown_reason = None
+        self.consecutive_empty = 0
+        self.consecutive_failures = 0
+        self.blocked = False
+        self.runs = 0
+        self.network_samples = deque(maxlen=12)
+        self.queue_samples = deque(maxlen=12)
+        self.relevant_samples = deque(maxlen=8)
+        self.received_samples = deque(maxlen=8)
+
+
+class SourceHealthRegistry:
+    """Registre processus unique, thread-safe, indexe par nom de source."""
+
+    def __init__(self):
+        self._lock = threading.Lock()
+        self._entries = {}
+
+    def _entry(self, name):
+        name = str(name or "").strip()
+        entry = self._entries.get(name)
+        if entry is None:
+            entry = _SourceHealthEntry(name)
+            self._entries[name] = entry
+        return entry
+
+    def record_http(self, name, status):
+        """Statut HTTP observe sur l'hote public (403/429 -> blocage)."""
+        if not name:
+            return
+        try:
+            status = int(status)
+        except (TypeError, ValueError):
+            return
+        with self._lock:
+            entry = self._entry(name)
+            entry.last_http_status = status
+            if status in BLOCKED_HTTP_STATUSES:
+                entry.blocked = True
+                entry.consecutive_failures += 1
+                entry.last_failure_at = time.time()
+                entry.cooldown_until = time.time() + COOLDOWN_BLOCKED_SECONDS
+                entry.cooldown_reason = f"HTTP {status}"
+
+    def record_blocked(self, name, reason="refus/challenge"):
+        """Blocage observe sans statut HTTP precis (challenge, page anti-bot)."""
+        if not name:
+            return
+        with self._lock:
+            entry = self._entry(name)
+            entry.blocked = True
+            entry.consecutive_failures += 1
+            entry.last_failure_at = time.time()
+            entry.cooldown_until = time.time() + COOLDOWN_BLOCKED_SECONDS
+            entry.cooldown_reason = str(reason or "refus/challenge")
+
+    def record_exception(self, name):
+        """Erreur reseau/lancement (timeout, echec DNS, playwright...)."""
+        if not name:
+            return
+        with self._lock:
+            entry = self._entry(name)
+            entry.consecutive_failures += 1
+            entry.last_failure_at = time.time()
+            if entry.consecutive_failures >= CONSECUTIVE_FAILURES_TO_COOLDOWN:
+                entry.cooldown_until = time.time() + COOLDOWN_TIMEOUT_SECONDS
+                entry.cooldown_reason = "echecs successifs"
+
+    def record_outcome(self, name, received, relevant, network_elapsed=None, queue_wait=None):
+        """Resultat observe d'une passe complete pour la source.
+
+        `received` : cartes brutes ; `relevant` : offres conservees apres
+        analyse. Un vide lent et repetitif met la source en cooldown court.
+        """
+        if not name:
+            return
+        with self._lock:
+            entry = self._entry(name)
+            entry.runs += 1
+            try:
+                received = int(received or 0)
+            except (TypeError, ValueError):
+                received = 0
+            try:
+                relevant = int(relevant or 0)
+            except (TypeError, ValueError):
+                relevant = 0
+            if network_elapsed is not None:
+                entry.network_samples.append(max(0.0, float(network_elapsed)))
+            if queue_wait is not None:
+                entry.queue_samples.append(max(0.0, float(queue_wait)))
+            entry.received_samples.append(received)
+            entry.relevant_samples.append(relevant)
+            if relevant > 0:
+                entry.last_success_at = time.time()
+                entry.consecutive_empty = 0
+                entry.consecutive_failures = 0
+                if not entry.cooldown_until:
+                    entry.blocked = False
+                return
+            entry.consecutive_empty += 1
+            if (
+                entry.consecutive_empty >= 1
+                and (network_elapsed or 0.0) >= EMPTY_SLOW_SECONDS
+            ):
+                entry.cooldown_until = time.time() + COOLDOWN_EMPTY_SECONDS
+                entry.cooldown_reason = "vide lent et repetitif"
+
+    def in_cooldown(self, name):
+        if not name:
+            return False
+        with self._lock:
+            entry = self._entries.get(name)
+            if entry is None:
+                return False
+            if entry.cooldown_until and entry.cooldown_until <= time.time():
+                entry.cooldown_until = 0.0
+                entry.cooldown_reason = None
+                return False
+            return entry.cooldown_until > time.time()
+
+    def skip_source(self, name):
+        """True si la source ne doit pas consommer de worker maintenant."""
+        return self.in_cooldown(name)
+
+    @staticmethod
+    def _classify_entry(entry, now):
+        """Classement sans verrou : appele sous _lock ou avec entree stable."""
+        if entry is None:
+            return STATUS_UNKNOWN, "b"
+        if entry.cooldown_until and entry.cooldown_until > now:
+            return (STATUS_BLOCKED if entry.blocked else STATUS_TEMP_UNAVAILABLE), "cooldown"
+        if sum(entry.relevant_samples or [0]) > 0:
+            return STATUS_ACTIVE, "a"
+        if entry.runs > 0:
+            return STATUS_PARTIAL, "b"
+        return STATUS_UNKNOWN, "b"
+
+    def classify(self, name):
+        """Retourne (status, tier) pour affichage debug et ordonnancement."""
+        with self._lock:
+            entry = self._entries.get(name)
+        return self._classify_entry(entry, time.time())
+
+    def priority_score(self, name, base_rank):
+        """Score d'ordonnancement dynamique ou None si la source doit etre omise.
+
+        = classement d'intention (petit = tot) + sante observee :
+        - productive recente -> tier A (devance) ;
+        - vide lent et repetitif -> tier C (tout a la fin).
+        """
+        if self.skip_source(name):
+            return None
+        with self._lock:
+            entry = self._entries.get(name)
+        if entry is None:
+            return int(base_rank or 0)
+        score = int(base_rank or 0)
+        if sum(entry.relevant_samples or [0]) > 0:
+            score -= _TIER_A_BONUS
+        slow_empty = entry.consecutive_empty >= CONSECUTIVE_EMPTY_TO_DEPRIORITIZE
+        if slow_empty and entry.network_samples and statistics.median(entry.network_samples) >= EMPTY_SLOW_SECONDS:
+            score += _TIER_C_PENALTY
+        return score
+
+    def skipped_sources(self, names):
+        return [name for name in (names or []) if self.in_cooldown(name)]
+
+    def snapshot(self, names=None):
+        """Etat lisible pour le panneau debug/admin des sources."""
+        with self._lock:
+            keys = [name for name in (names or []) if name in self._entries]
+            result = {}
+            now = time.time()
+            for name in keys:
+                entry = self._entries[name]
+                status, tier = self._classify_entry(entry, now)
+                result[name] = {
+                    "env": _ENV,
+                    "status": status,
+                    "tier": tier,
+                    "last_http_status": entry.last_http_status,
+                    "last_success_at": entry.last_success_at,
+                    "last_failure_at": entry.last_failure_at,
+                    "cooldown_remaining_s": max(0.0, entry.cooldown_until - now) if entry.cooldown_until else 0.0,
+                    "cooldown_reason": entry.cooldown_reason,
+                    "consecutive_empty": entry.consecutive_empty,
+                    "consecutive_failures": entry.consecutive_failures,
+                    "runs": entry.runs,
+                    "network_p50_ms": round(statistics.median(entry.network_samples) * 1000) if entry.network_samples else None,
+                    "queue_p50_ms": round(statistics.median(entry.queue_samples) * 1000) if entry.queue_samples else None,
+                    "raw_recent": sum(entry.received_samples),
+                    "relevant_recent": sum(entry.relevant_samples),
+                }
+            return result
+
+    def queue_p50(self):
+        with self._lock:
+            samples = []
+            for entry in self._entries.values():
+                samples.extend(entry.queue_samples)
+        return round(statistics.median(samples) * 1000) if samples else None
+
+    def cooldown_count(self):
+        now = time.time()
+        with self._lock:
+            return sum(1 for entry in self._entries.values() if entry.cooldown_until and entry.cooldown_until > now)
+
+    def reset(self):
+        with self._lock:
+            self._entries.clear()
+
+
+registry = SourceHealthRegistry()

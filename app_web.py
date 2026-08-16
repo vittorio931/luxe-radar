@@ -36,6 +36,7 @@ from radar_engine import rechercher_multi_marketplaces, _cle_unique_multi, _sele
 from image_similarity import MAX_IMAGE_BYTES, download_listing_image, image_feature, similarity
 from search_understanding import understand_query, suggest_queries, canonicalize_search_query
 from marketplaces.connectors.universal import discover_catalog_wave
+from marketplaces.source_health import current_environment, registry as source_health
 
 try:
     from search_intent import parse_search_intent as _parse_intent_impl
@@ -243,6 +244,11 @@ def internal_error(_error_value):
 @app.get("/api/health")
 def health():
     sites, marketplaces = _app_metadata()
+    try:
+        import resource as _resource
+        memory_rss_mb = round(_resource.getrusage(_resource.RUSAGE_SELF).ru_maxrss / 1024.0, 1)
+    except Exception:
+        memory_rss_mb = None
     return jsonify({
         "status": "ok",
         "version": APP_VERSION,
@@ -253,6 +259,12 @@ def health():
         "catalog_sites": len(sites),
         "billing_ready": _billing_ready(),
         "index_enabled": index_engine.index_enabled(),
+        "diagnostics": {
+            "env": current_environment(),
+            "queue_p50_ms": source_health.queue_p50(),
+            "cooldown_count": source_health.cooldown_count(),
+            "memory_rss_mb": memory_rss_mb,
+        },
     })
 
 
@@ -549,11 +561,14 @@ def _rotating_luxury_query() -> str:
     return _LUXURY_UNIVERSE_QUERIES[int(_time.strftime("%j")) % len(_LUXURY_UNIVERSE_QUERIES)]
 
 def _progressive_source_order(query, active_marketplaces):
-    """Met les marchands les plus plausibles en tête sans masquer les autres.
+    """Met les marchands les plus plausibles et productifs en tête.
 
-    Tous les connecteurs restent accessibles : on évite seulement qu'une requête
-    Stone Island occupe les premiers workers avec cinq boutiques running, ou
-    qu'une recherche On Cloud attende les généralistes avant i-Run/21RUN.
+    L'ordre combine l'intention de la requête (running/fashion/générique) et la
+    santé observée pour l'environnement courant :
+    - source productive récente -> TIER A (devance la vague) ;
+    - source vide lente répétée -> TIER C (tout à la fin) ;
+    - source en cooldown/bloquée -> omise (aucun worker consommé).
+    La productivité reste dynamique par requête : on ne fige aucun classement.
     """
     try:
         info = understand_query(query)
@@ -590,9 +605,21 @@ def _progressive_source_order(query, active_marketplaces):
     else:
         preferred = generic_priority
     active = list(active_marketplaces or [])
-    order = [name for name in preferred if name in active]
-    order.extend(name for name in active if name not in order)
-    return order
+    ranked = {}
+    for index, name in enumerate(preferred):
+        if name in active:
+            ranked[name] = index
+    for index, name in enumerate(active):
+        ranked.setdefault(name, len(preferred) + index)
+    scored = []
+    for name in active:
+        base = ranked.get(name, len(preferred))
+        score = source_health.priority_score(name, base)
+        if score is None:
+            continue
+        scored.append((score, base, name))
+    scored.sort(key=lambda item: (item[0], item[1]))
+    return [name for _score, _base, name in scored]
 
 SUBSCRIPTION_PLANS = {
     "free": {
@@ -952,7 +979,11 @@ def _restore_search_session(token, owner, active_marketplaces):
         if pending:
             ref = "" if universe else reference
             strict = False if universe else reference_stricte
-            for source in pending:
+            skipped = source_health.skipped_sources(pending)
+            if skipped:
+                _mark_progressive_skipped(token, skipped, owner)
+            runnable = [name for name in pending if name not in set(skipped)]
+            for source in runnable:
                 _progressive_executor.submit(
                     _finish_progressive_source,
                     token, search_request, price, source, ref, strict, owner,
@@ -1168,6 +1199,29 @@ def _progressive_task_allowed(token, source, owner):
         return source in (entry.get("pending_sources") or [])
 
 
+def _mark_progressive_skipped(token, skipped, owner):
+    """Retire les sources en cooldown de la vague en cours (observabilité)."""
+    if not skipped:
+        return
+    with _cache_lock:
+        _clean_cache()
+        entry = _search_cache.get(token)
+        if entry is None or entry.get("cancelled"):
+            return
+        expected_owner = str(entry.get("owner") or "")
+        if expected_owner and not secrets.compare_digest(expected_owner, str(owner or "")):
+            return
+        blocked = set(skipped)
+        pending = [name for name in entry.get("pending_sources") or [] if name not in blocked]
+        entry["pending_sources"] = pending
+        entry["pending"] = bool(pending)
+        skipped_list = list(entry.get("skipped_sources") or [])
+        for name in skipped:
+            if name not in skipped_list:
+                skipped_list.append(name)
+        entry["skipped_sources"] = skipped_list
+
+
 def _complete_progressive_source(token, source, additions, reference, strict, owner):
     """Fusion atomique d'une source progressive terminée."""
     result = None
@@ -1364,6 +1418,9 @@ def _finish_progressive_source(token, query, price, source, reference, strict, o
         received = len(additions or [])
         new_count = max(0, total - before)
         duplicates = max(0, received - new_count)
+        source_health.record_outcome(
+            source, received, new_count, network_elapsed, queue_wait
+        )
         print(
             f"[PROGRESSIF][{source}][PAGE {page}] received={received} relevant={received} "
             f"new={new_count} duplicates={duplicates} rejected=0 "
@@ -1374,6 +1431,7 @@ def _finish_progressive_source(token, query, price, source, reference, strict, o
             _log_search_summary(token, source, elapsed)
     except Exception:
         app.logger.exception("Échec de la source progressive %s", source)
+        source_health.record_exception(source)
         _fail_progressive_source(token, source, owner)
 
 
@@ -1589,6 +1647,7 @@ def result_status(token):
             "expansion_inflight": bool(entry.get("expansion_inflight")),
             "expansion_exhausted": bool(entry.get("expansion_exhausted")),
             "catalog_scanned": int(entry.get("catalog_scanned", 0)),
+            "skipped_sources": list(entry.get("skipped_sources") or []),
             "index_mode": bool(entry.get("index_mode")),
             "index_hit_count": int(entry.get("index_hit_count", 0)),
             "index_total": int(entry.get("index_total", 0)),
@@ -1632,6 +1691,16 @@ def sources_health():
             "cooldown_seconds": float(getattr(connector, "cooldown_seconds", 0)),
             "health": health,
         }
+    runtime_health = source_health.snapshot(active_marketplaces)
+    for name in profile:
+        runtime = runtime_health.get(name)
+        if runtime:
+            profile[name]["runtime"] = runtime
+    profile["_diagnostics"] = {
+        "env": current_environment(),
+        "cooldown_count": source_health.cooldown_count(),
+        "queue_p50_ms": source_health.queue_p50(),
+    }
     _sources_health_cache.update({"at": time.time(), "profile": profile})
     return jsonify({"sources": profile})
 
@@ -2111,6 +2180,15 @@ def _run_radar_search(recherche, prix_saisi, selected_platform, reference_saisie
             f"rendu immédiat: {state['index_hit_count']}/{indexed.total} offres | "
             f"rafraîchissement: {', '.join(progressive_sources)}"
         )
+        # Sources en cooldown/blocage pour l'environnement courant : on ne les
+        # re-planifie pas, aucun worker n'est consommé ni réseau répété.
+        skipped = source_health.skipped_sources(active_marketplaces)
+        if skipped:
+            _mark_progressive_skipped(search_token, skipped, owner)
+            print(
+                f"[PROGRESSIF][SKIP] cooldown environnement "
+                f"({current_environment()}) -> {', '.join(skipped)}"
+            )
         for source in progressive_sources:
             _progressive_executor.submit(
                 _finish_progressive_source,

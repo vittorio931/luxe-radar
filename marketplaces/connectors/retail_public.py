@@ -20,6 +20,7 @@ from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
 
 from .base import MarketplaceConnector
+from ..source_health import registry as _source_health
 
 IS_RENDER = bool(
     os.environ.get("RENDER")
@@ -470,6 +471,7 @@ class _PublicRetailBase(MarketplaceConnector):
                 last_status = response.status_code
                 if response.status_code != 200:
                     if response.status_code in {400, 403, 429}:
+                        _source_health.record_http(self.name, response.status_code)
                         print(f"[{self.name}] route {route_index} HTTP {response.status_code} -> ignorée")
                     continue
                 content_type = str(response.headers.get("Content-Type") or "").lower()
@@ -494,6 +496,7 @@ class _PublicRetailBase(MarketplaceConnector):
                     break
             if not raw and last_status in {400, 403, 429}:
                 _SOURCE_COOLDOWN_UNTIL[self.name] = time.monotonic() + _SOURCE_COOLDOWN_SECONDS
+                _source_health.record_blocked(self.name, "routes publiques refusees")
                 print(f"[{self.name}] aucune route publique exploitable -> pause temporaire")
             results = []
             seen = set()
