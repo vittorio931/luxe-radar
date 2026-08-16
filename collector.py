@@ -461,6 +461,10 @@ class Collector:
                 price_max = None
         except (TypeError, ValueError):
             price_max = None
+        # I/O SQLite HORS du verrou : la route /api/collector/status ne doit
+        # jamais attendre derrière une passe du collecteur (voir V3.8 prod).
+        if index_engine.collector_has_recent(query, COLLECTOR_TRIGGER_WINDOW_SECONDS, path=self._path):
+            return False
         with self._lock:
             folded = index_engine.canonical_query(query)
             if self._in_flight and index_engine.canonical_query(self._in_flight[0]) == folded:
@@ -468,8 +472,6 @@ class Collector:
             for q, _price in self._queue:
                 if index_engine.canonical_query(q) == folded:
                     return False
-            if index_engine.collector_has_recent(query, COLLECTOR_TRIGGER_WINDOW_SECONDS, path=self._path):
-                return False
             self._queue.append((query, price_max))
             self._last_trigger_sweep = time()
             return True
@@ -478,11 +480,12 @@ class Collector:
         with self._lock:
             queue = [{"query": q, "price_max": p} for q, p in self._queue]
             recent = list(self._recent_runs)
+            in_flight = self._in_flight
         return {
             "enabled": COLLECTOR_ENABLED,
             "running": bool(self._thread is not None and self._thread.is_alive()),
-            "busy": self._in_flight is not None,
-            "in_flight": dict(self._in_flight) if self._in_flight else None,
+            "busy": in_flight is not None,
+            "in_flight": {"query": in_flight[0], "price_max": in_flight[1]} if in_flight else None,
             "queue": queue,
             "recent_runs": recent[-8:],
             "freshness_seconds": COLLECTOR_FRESHNESS_SECONDS,

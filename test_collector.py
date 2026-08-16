@@ -8,6 +8,8 @@ traces collector_runs, avant/après par seed, et le dédupe d'enqueue.
 import os
 import pathlib
 import tempfile
+import threading
+import time
 from contextlib import contextmanager
 from unittest.mock import patch
 
@@ -211,6 +213,35 @@ def test_deep_page_limit():
     assert collector.deep_page_limit(fake_retail) == 100
     fake_flat = _FakeConnector("ASOS", [], supports_pagination=False, expansion_page_size=60)
     assert collector.deep_page_limit(fake_flat) == 60
+
+
+def test_status_never_blocks_on_db():
+    """V3.8 prod : la route /api/collector/status ne doit JAMAIS attendre
+    derrière un I/O SQLite (enqueue / seed_stale ne tiennent pas le verrou
+    pendant un appel base). Un accès DB lent ne gèle donc pas l'app."""
+    with _with_index_db() as db:
+        engine = collector.Collector(path=db)
+        engine.start()
+        try:
+            real = index_engine.collector_has_recent
+
+            def slow_recent(*args, **kwargs):
+                time.sleep(2.0)
+                return real(*args, **kwargs)
+
+            with patch.object(index_engine, "collector_has_recent", side_effect=slow_recent):
+                worker = threading.Thread(target=engine.enqueue, args=("Nike P-6000", 250))
+                worker.start()
+                time.sleep(0.3)  # enqueue est coincé dans l'appel DB lent
+                t0 = time.time()
+                status = engine.status()
+                elapsed = time.time() - t0
+                worker.join(timeout=5)
+                assert not worker.is_alive()
+                assert elapsed < 1.0, f"status bloqué {elapsed:.2f}s derrière la DB"
+                assert status["running"] is True
+        finally:
+            engine.stop()
 
 
 def test_index_spillover():
