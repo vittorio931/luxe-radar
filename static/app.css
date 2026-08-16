@@ -672,3 +672,15 @@ body{background:var(--bg);font-size:14px}.app-shell{display:block;min-height:0}.
 .source-chip .source-cap-badge.paginated{color:var(--accent)}
 .source-chip.connector-disabled{opacity:.55}
 .source-chip.connector-disabled .source-cap-badge{color:#d05353}
+/* CHECKPOINT 4 — audit mobile prod 2026-08-16 */
+@media(max-width:900px){
+  input[type="text"],input[type="search"],input[type="number"],input[type="tel"],input[type="email"],select,textarea{font-size:16px!important}
+  #view-radar .search-query-field .control{font-size:19px!important}
+  .search-query-field .control{font-size:17px!important}
+}
+@media(max-width:760px){
+  .global-search button,.home-search button{min-height:44px;min-width:44px}
+  .popular-chip{min-height:44px}
+  .onboarding-actions button{min-height:48px}
+  a.skip-link{min-height:44px}
+}
