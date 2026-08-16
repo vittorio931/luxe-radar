@@ -532,19 +532,26 @@ class Collector:
 
     def _loop(self):
         while not self._stop.is_set():
-            job = self._dequeue()
-            if job is None:
-                if self._refill_defaults() == 0:
-                    sleep(COLLECTOR_IDLE_SECONDS)
-                    continue
-                continue
-            query, price_max = job
             try:
-                self._run_seed(query, price_max)
-            except Exception as exc:  # noqa: BLE001 - le collecteur ne doit jamais tuer l'app
+                job = self._dequeue()
+                if job is None:
+                    if self._refill_defaults() == 0:
+                        sleep(COLLECTOR_IDLE_SECONDS)
+                    continue
+                query, price_max = job
+                try:
+                    self._run_seed(query, price_max)
+                except Exception as exc:  # noqa: BLE001 - une passe ne doit jamais tuer le thread
+                    with self._lock:
+                        self._in_flight = None
+                        self._recent_runs.append({"query": query, "error": str(exc)[:200]})
+            except Exception as exc:  # noqa: BLE001 - erreur transitoire (DB au boot...) : on saute un cycle
                 with self._lock:
-                    self._in_flight = None
-                    self._recent_runs.append({"query": query, "error": str(exc)[:200]})
+                    self._recent_runs.append({"error": str(exc)[:200]})
+                try:
+                    sleep(2.0)
+                except Exception:
+                    return
             sleep(COLLECTOR_SLEEP_SECONDS)
 
 

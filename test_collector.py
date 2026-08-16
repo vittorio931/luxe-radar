@@ -311,6 +311,40 @@ def test_reads_survive_collector_writes():
             w.join(timeout=5)
 
 
+def test_collector_survives_transient_db_errors():
+    """V3.8 prod : si la base refuse une lecture au boot (verrou transitoire),
+    le thread collecteur ne doit PAS mourir (running=false observé sur Render)."""
+    with _with_index_db() as db:
+        with patch.object(collector, "COLLECTOR_SLEEP_SECONDS", 0.1), \
+             patch.object(collector, "COLLECTOR_IDLE_SECONDS", 0.1), \
+             patch.object(collector, "parse_seeds", return_value=[("Nike P-6000", 250.0)]), \
+             patch.object(collector, "get_available_connectors", return_value={}):
+            engine = collector.Collector(path=db)
+            real = index_engine.collector_has_recent
+            state = {"n": 0}
+
+            def flaky(*args, **kwargs):
+                state["n"] += 1
+                if state["n"] <= 3:
+                    raise sqlite3.OperationalError("database is locked")
+                return real(*args, **kwargs)
+
+            engine.start()
+            try:
+                with patch.object(index_engine, "collector_has_recent", side_effect=flaky):
+                    deadline = time.time() + 4.0
+                    while time.time() < deadline:
+                        time.sleep(0.1)
+                        if not engine.status()["running"]:
+                            break
+                    assert engine.status()["running"] is True, "thread mort sur erreur DB transitoire"
+                    time.sleep(1.0)
+                    assert engine.status()["running"] is True
+                    assert state["n"] >= 3
+            finally:
+                engine.stop()
+
+
 def _main():
     import sys
     tests = [value for key, value in sorted(globals().items()) if key.startswith("test_") and callable(value)]
