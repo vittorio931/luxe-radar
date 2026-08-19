@@ -1982,96 +1982,15 @@ def _analyse_discovery_items(items, query, price):
     return analysed
 
 
-def _expand_search_once(token, owner, marketplace="Toutes"):
-    """Ajoute une nouvelle vague réelle au catalogue d'une recherche.
+def _expand_in_background(token, owner, target, query, price, page_state,
+                          page_empty, recall_limit, recall_empty,
+                          discovery_cursor, discovery_has_more, round_index):
+    """Worker asynchrone : exécute le réseau + fusionne dans le token.
 
-    - toutes les sources avec pagination publique : page suivante ;
-    - sources sans pagination fiable : élargissement borné du rappel ;
-    - catalogue massif : quelques sites publics non bloqués sont sondés en
-      parallèle. Les 1000+ domaines ne sont jamais frappés simultanément.
+    Tourne dans ``_progressive_executor`` pour ne jamais bloquer un
+    thread Gunicorn. Le flag ``expansion_inflight`` est posé par
+    l'appelant et réinitialisé ici, même en cas d'erreur.
     """
-    owner = str(owner or "")
-    entry = _ensure_search_session(token, owner, _app_metadata()[1])
-    if entry is None:
-        return None, 404
-    with _cache_lock:
-        _clean_cache()
-        entry = _search_cache.get(token)
-        if entry is None:
-            return None, 404
-        expected_owner = str(entry.get("owner") or "")
-        if expected_owner and not secrets.compare_digest(expected_owner, owner):
-            return None, 404
-        if entry.get("expansion_inflight"):
-            return {"accepted": True, "busy": True, "added": 0, "exhausted": bool(entry.get("expansion_exhausted")), "retry_after_ms": 1800}, 202
-        query = str(entry.get("search_query") or "").strip()
-        price = entry.get("search_price")
-        if not query or price in (None, ""):
-            entry["expansion_exhausted"] = True
-            return {"accepted": False, "busy": False, "added": 0, "exhausted": True}, 200
-
-        exhausted = set(entry.get("page_exhausted") or [])
-        round_index = int(entry.get("expansion_round", 0))
-        discovery_has_more = bool(entry.get("discovery_has_more", True))
-        initial_pipeline_pending = bool(entry.get("pending_sources") or [])
-        existing_count = len(entry.get("results") or [])
-
-        requested = str(marketplace or "Toutes")
-        # Une page initiale totalement vide ne doit pas déclencher une page 2
-        # en parallèle de la page 1 simplement parce que le sentinel est déjà
-        # visible. On laisse d'abord le pipeline progressif livrer sa première
-        # offre ; le navigateur retentera ensuite automatiquement.
-        if requested == "Toutes" and initial_pipeline_pending and existing_count == 0:
-            return {
-                "accepted": True, "busy": True, "added": 0,
-                "exhausted": False, "source": "sources en cours",
-                "retry_after_ms": 1500,
-            }, 202
-        target = None
-        if requested != "Toutes":
-            if requested in EXPAND_ALL_SOURCES and requested not in exhausted:
-                target = requested
-            else:
-                return {"accepted": False, "busy": False, "added": 0, "exhausted": True, "source": requested}, 200
-        else:
-            # Pendant que Grailed/Vinted/les sources lentes finissent leur premier
-            # passage, le scroll peut déjà avancer sur les deux pages HTTP rapides.
-            # On évite ainsi le "mur" de 20-30 s en bas de liste.
-            # Pendant le pipeline initial, eBay seul alimente le scroll.
-            # Zalando tourne déjà en arrière-plan et ne doit pas lancer une
-            # seconde requête lente en parallèle.
-            wave_order = ("eBay",) if initial_pipeline_pending else EXPAND_WAVE_ORDER
-            for step in range(len(wave_order)):
-                candidate = wave_order[(round_index + step) % len(wave_order)]
-                if candidate == "__catalog__":
-                    if discovery_has_more:
-                        target = candidate
-                        round_index += step + 1
-                        break
-                elif candidate not in exhausted:
-                    target = candidate
-                    round_index += step + 1
-                    break
-            if target is None:
-                # Les vagues rapides sont peut-être épuisées, mais le premier
-                # pipeline peut encore apporter de nouvelles annonces.
-                if initial_pipeline_pending:
-                    return {
-                        "accepted": True, "busy": True, "added": 0,
-                        "exhausted": False, "source": "sources en cours",
-                        "retry_after_ms": 1800,
-                    }, 202
-                entry["expansion_exhausted"] = True
-                return {"accepted": False, "busy": False, "added": 0, "exhausted": True}, 200
-
-        entry["expansion_inflight"] = True
-        entry["expansion_round"] = round_index
-        page_state = dict(entry.get("page_state") or {})
-        page_empty = dict(entry.get("page_empty") or {})
-        recall_limit = dict(entry.get("recall_limit") or EXPAND_RECALL_INITIAL_LIMITS)
-        recall_empty = dict(entry.get("recall_empty") or {})
-        discovery_cursor = int(entry.get("discovery_cursor", 0))
-
     additions = []
     scanned = 0
     next_discovery_cursor = discovery_cursor
@@ -2125,11 +2044,11 @@ def _expand_search_once(token, owner, marketplace="Toutes"):
     with _cache_lock:
         _clean_cache()
         entry = _search_cache.get(token)
-        if entry is None:
-            return None, 404
+        if entry is None or entry.get("cancelled"):
+            return
         expected_owner = str(entry.get("owner") or "")
         if expected_owner and not secrets.compare_digest(expected_owner, owner):
-            return None, 404
+            return
 
         existing = [dict(item) for item in entry.get("results") or []]
         merged = _append_expansion_results(existing, additions)
@@ -2152,9 +2071,6 @@ def _expand_search_once(token, owner, marketplace="Toutes"):
                 empty[target] = int(empty.get(target, 0)) + 1
             else:
                 empty[target] = 0
-            # The underlying multi-search deliberately caps a single source at
-            # 100 candidates. One empty widening pass or reaching that cap means
-            # there is no honest deeper cursor to request for this connector.
             if empty[target] >= 1 or limits[target] >= 100:
                 exhausted.add(target)
             entry["recall_limit"] = limits
@@ -2168,10 +2084,6 @@ def _expand_search_once(token, owner, marketplace="Toutes"):
                 empty[target] = int(empty.get(target, 0)) + 1
             else:
                 empty[target] = 0
-            # A blocked/ignored retail page will return no additions and exhaust
-            # quickly. We never attempt to work around 403/429/challenges.
-            # La condition d'arrêt vient des capacités du connecteur (3 pages
-            # consécutives vides par défaut pour les sources paginées V4).
             connector = get_connector(target)
             empty_threshold = int(getattr(connector, "empty_pages_threshold", 2) or 2) if connector is not None else 2
             max_pages = int(getattr(connector, "max_pages", 0) or 0) if connector is not None else 0
@@ -2190,24 +2102,99 @@ def _expand_search_once(token, owner, marketplace="Toutes"):
             all(source in exhausted for source in EXPAND_ALL_SOURCES)
             and not bool(entry.get("discovery_has_more", True))
         )
-        # Snapshotter sous le verrou, mais persister hors du verrou RAM :
-        # SQLite peut attendre sous contention et ne doit jamais bloquer
-        # /status ni /api/results pendant ce temps.
         persist_snapshot = dict(entry)
-        response_payload = {
-            "accepted": True,
-            "busy": False,
-            "source": "catalogue" if target == "__catalog__" else target,
-            "page": next_page,
-            "recall_limit": next_recall_limit,
-            "added": added,
-            "total": len(merged),
-            "catalog_scanned": int(entry.get("catalog_scanned", 0)),
-            "exhausted": bool(entry.get("expansion_exhausted")),
-            "error": error,
-        }
     _persist_search_session(persist_snapshot, token, owner)
-    return response_payload, 200
+
+
+def _expand_search_once(token, owner, marketplace="Toutes"):
+    """Planifie une nouvelle vague asynchrone dans le catalogue d'une recherche.
+
+    La requête réseau est soumise à ``_progressive_executor`` et ne bloque
+    JAMAIS un thread Gunicorn. Le flag ``expansion_inflight`` empêche les
+    appels multiples pendant l'exécution.
+    """
+    owner = str(owner or "")
+    entry = _ensure_search_session(token, owner, _app_metadata()[1])
+    if entry is None:
+        return None, 404
+    with _cache_lock:
+        _clean_cache()
+        entry = _search_cache.get(token)
+        if entry is None:
+            return None, 404
+        expected_owner = str(entry.get("owner") or "")
+        if expected_owner and not secrets.compare_digest(expected_owner, owner):
+            return None, 404
+        if entry.get("expansion_inflight"):
+            return {"accepted": True, "busy": True, "added": 0, "exhausted": bool(entry.get("expansion_exhausted")), "retry_after_ms": 1800}, 202
+        query = str(entry.get("search_query") or "").strip()
+        price = entry.get("search_price")
+        if not query or price in (None, ""):
+            entry["expansion_exhausted"] = True
+            return {"accepted": False, "busy": False, "added": 0, "exhausted": True}, 200
+
+        exhausted = set(entry.get("page_exhausted") or [])
+        round_index = int(entry.get("expansion_round", 0))
+        discovery_has_more = bool(entry.get("discovery_has_more", True))
+        initial_pipeline_pending = bool(entry.get("pending_sources") or [])
+        existing_count = len(entry.get("results") or [])
+
+        requested = str(marketplace or "Toutes")
+        if requested == "Toutes" and initial_pipeline_pending and existing_count == 0:
+            return {
+                "accepted": True, "busy": True, "added": 0,
+                "exhausted": False, "source": "sources en cours",
+                "retry_after_ms": 1500,
+            }, 202
+        target = None
+        if requested != "Toutes":
+            if requested in EXPAND_ALL_SOURCES and requested not in exhausted:
+                target = requested
+            else:
+                return {"accepted": False, "busy": False, "added": 0, "exhausted": True, "source": requested}, 200
+        else:
+            wave_order = ("eBay",) if initial_pipeline_pending else EXPAND_WAVE_ORDER
+            for step in range(len(wave_order)):
+                candidate = wave_order[(round_index + step) % len(wave_order)]
+                if candidate == "__catalog__":
+                    if discovery_has_more:
+                        target = candidate
+                        round_index += step + 1
+                        break
+                elif candidate not in exhausted:
+                    target = candidate
+                    round_index += step + 1
+                    break
+            if target is None:
+                if initial_pipeline_pending:
+                    return {
+                        "accepted": True, "busy": True, "added": 0,
+                        "exhausted": False, "source": "sources en cours",
+                        "retry_after_ms": 1800,
+                    }, 202
+                entry["expansion_exhausted"] = True
+                return {"accepted": False, "busy": False, "added": 0, "exhausted": True}, 200
+
+        entry["expansion_inflight"] = True
+        entry["expansion_round"] = round_index
+        page_state = dict(entry.get("page_state") or {})
+        page_empty = dict(entry.get("page_empty") or {})
+        recall_limit = dict(entry.get("recall_limit") or EXPAND_RECALL_INITIAL_LIMITS)
+        recall_empty = dict(entry.get("recall_empty") or {})
+        discovery_cursor = int(entry.get("discovery_cursor", 0))
+
+    _progressive_executor.submit(
+        _expand_in_background,
+        token, owner, target, query, price,
+        page_state, page_empty, recall_limit, recall_empty,
+        discovery_cursor, discovery_has_more, round_index,
+    )
+    return {
+        "accepted": True, "busy": True, "added": 0,
+        "exhausted": False,
+        "source": "catalogue" if target == "__catalog__" else target,
+        "retry_after_ms": 2000,
+    }, 202
 
 
 @app.post("/api/results/<token>/expand")
@@ -2328,7 +2315,7 @@ def more_results(token):
     risk = request.args.get("risk", "all")
     if risk not in {"all", "hide_high", "low_only"}:
         risk = "all"
-    identity = request.args.get("identity", "confirmed")
+    identity = request.args.get("identity", "all")
     if identity not in {"all", "confirmed", "strong", "unverified"}:
         identity = "all"
     page = _result_page(token, offset, limit=parsed_limit, sort=sort, marketplace=marketplace, price_min=price_min, price_max=price_max, price_exact=price_exact, price_tolerance=price_tolerance, exclude=exclude, risk=risk, identity=identity, owner=session.get("csrf_token"))
@@ -2480,7 +2467,7 @@ def _run_radar_search(recherche, prix_saisi, selected_platform, reference_saisie
 
     def _finalize_first_page():
         first_page = (
-            _result_page(state["search_token"], 0, state["initial_lots"], identity="confirmed", owner=session.get("csrf_token"))
+            _result_page(state["search_token"], 0, state["initial_lots"], identity="all", owner=session.get("csrf_token"))
             if state["search_token"] else None
         )
         total_n = first_page["total"] if first_page else 0

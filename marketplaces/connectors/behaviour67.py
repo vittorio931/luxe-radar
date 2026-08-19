@@ -19,6 +19,7 @@ from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
 
 from .base import MarketplaceConnector
+from ..source_health import registry as _source_health
 
 
 BASE_URL = "https://www.67behaviour.com"
@@ -1521,6 +1522,7 @@ class Behaviour67Connector(MarketplaceConnector):
             # ----------------------------------------------------
             # 1. DECOUVERTE HTTP — chemin principal
             # ----------------------------------------------------
+            http_failed_blocked = False
             try:
                 liens = _decouvrir_liens_http(
                     session,
@@ -1533,6 +1535,22 @@ class Behaviour67Connector(MarketplaceConnector):
                         f"{len(liens)} liens produits trouves via HTTP"
                     )
 
+            except requests.exceptions.HTTPError as e:
+                status = getattr(e.response, "status_code", None)
+                if status == 429:
+                    print(
+                        "[67behaviour] "
+                        "HTTP 429 -> cooldown, "
+                        "skip browser"
+                    )
+                    _source_health.record_http("67behaviour", 429)
+                    http_failed_blocked = True
+                else:
+                    print(
+                        "[67behaviour] "
+                        "Recherche HTTP indisponible : "
+                        f"{e}"
+                    )
             except Exception as e:
                 print(
                     "[67behaviour] "
@@ -1542,8 +1560,10 @@ class Behaviour67Connector(MarketplaceConnector):
 
             # ----------------------------------------------------
             # 2. PLAYWRIGHT — secours seulement
+            #    Jamais si HTTP a renvoyé un blocage anti-bot
+            #    (429/403) : navigateur ne fera pas mieux.
             # ----------------------------------------------------
-            if not liens:
+            if not liens and not http_failed_blocked:
                 print(
                     "[67behaviour] "
                     "Passage au mode navigateur de secours"

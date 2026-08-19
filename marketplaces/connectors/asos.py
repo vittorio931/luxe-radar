@@ -30,6 +30,7 @@ from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
 
 from .base import MarketplaceConnector
+from ..source_health import registry as _source_health
 
 BASE_URL = "https://www.asos.com"
 SEARCH_URL_FR = f"{BASE_URL}/fr/search/"
@@ -852,6 +853,7 @@ def _telecharger_pages_variantes(search_url, headers, variantes, nombre_pages, l
     if not taches:
         return pages
 
+    blocked_403 = False
     with ThreadPoolExecutor(max_workers=min(len(taches), 4 if IS_RENDER else 8)) as executor:
         futurs = {
             executor.submit(_telecharger_page, search_url, headers, variante, page): (variante, page)
@@ -861,10 +863,16 @@ def _telecharger_pages_variantes(search_url, headers, variantes, nombre_pages, l
             variante, page = futurs[futur]
             info = futur.result()
             info["query_variant"] = variante
-            if info.get("status") != 200:
-                detail = info.get("error") or f"HTTP {info.get('status')}"
+            status = info.get("status")
+            if status == 403:
+                blocked_403 = True
+            if status != 200:
+                detail = info.get("error") or f"HTTP {status}"
                 print(f"[ASOS][{locale}] '{variante}' page {page} indisponible : {detail}")
             pages.append(info)
+
+    if blocked_403:
+        print(f"[ASOS][{locale}] HTTP 403 détecté → fail-fast, variants supplémentaires ignorés")
 
     pages.sort(key=lambda item: (str(item.get("query_variant") or ""), item.get("page", 0)))
     return pages
@@ -880,6 +888,8 @@ def _telecharger_page(search_url, headers, query, page):
             timeout=HTTP_TIMEOUT,
             allow_redirects=True,
         )
+        if response.status_code == 403:
+            _source_health.record_http("ASOS", 403)
         return {
             "page": page,
             "status": response.status_code,
@@ -1182,4 +1192,6 @@ class ASOSConnector(MarketplaceConnector):
                 if item.get("match_requete_fort")
             )[:900]
             print(f"[ASOS][FORTS] {apercu}")
+        if not retenus and stats_fr and not stats_fr.get("pages_ok"):
+            _source_health.record_blocked("ASOS", "toutes les routes FR refusées")
         return retenus
