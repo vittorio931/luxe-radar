@@ -26,3 +26,18 @@ accesslog = "-"
 errorlog = "-"
 capture_output = True
 preload_app = False
+
+
+def post_fork(server, worker):
+    """Hook Gunicorn: démarre collector + learning APRÈS fork du worker.
+
+    UNIQUE point de démarrage des background workers sous Gunicorn.
+    Jamais exécuté dans le master, même avec preload_app=True.
+    Idempotent : deux appels dans le même worker ne créent qu'un seul
+    thread collector et qu'un seul thread learning.
+    """
+    try:
+        from app_web import _start_background_workers
+        _start_background_workers()
+    except Exception:
+        pass

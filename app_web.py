@@ -2,6 +2,7 @@ from collections import OrderedDict
 from collections import defaultdict, deque
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import timedelta
+import json
 import logging
 import math
 import secrets
@@ -28,6 +29,7 @@ except Exception:
 import billing_stripe
 import collector
 import index_engine
+import learn
 import search_sessions
 
 from connector_registry import get_available_connectors
@@ -752,12 +754,17 @@ _index_executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="luxe-ind
 _collector = collector.Collector()
 
 
-def _start_collector():
-    """Démarre le collecteur une seule fois (appelé par wsgi / __main__)."""
+def _start_background_workers():
+    """Démarre collector + learning une seule fois (appelé par hook Gunicorn ou __main__)."""
     try:
         if collector.COLLECTOR_ENABLED:
             _collector.start()
     except Exception:  # pragma: no cover - le collecteur ne doit pas bloquer l'app
+        pass
+    try:
+        import index_engine as _ie
+        learn.start_learn_worker(db_path=_ie.default_db_path())
+    except Exception:  # pragma: no cover - le learning ne doit pas bloquer l'app
         pass
 
 
@@ -1841,6 +1848,89 @@ def sources_health():
     return jsonify({"sources": profile})
 
 
+@app.post("/api/learn/event")
+def learn_event():
+    """Collecte anonyme d'événements d'interaction (analytics).
+
+    Feature flag LUXE_RADAR_LEARN_ENABLED doit être actif.
+    Sécurité : POST uniquement, CSRF via security_gate, body borné,
+    types allowlistés, query_key dérivée côté serveur du search_token.
+    """
+    if not learn.LEARN_ENABLED:
+        return jsonify({"ok": False}), 204
+
+    raw = request.get_data(cache=False, as_text=True)
+    if len(raw) > learn.LEARN_MAX_BODY_BYTES:
+        return jsonify({"ok": False}), 413
+
+    try:
+        payload = json.loads(raw) if raw else {}
+    except (json.JSONDecodeError, ValueError):
+        return jsonify({"ok": False}), 400
+
+    raw_events = payload.get("events")
+    if not isinstance(raw_events, list) or not raw_events:
+        return jsonify({"ok": False}), 400
+    raw_events = raw_events[: learn.LEARN_MAX_EVENTS_PER_POST]
+
+    search_token = str(payload.get("token") or "")
+    learn_sid = session.get("learn_sid")
+    if not learn_sid:
+        learn_sid = secrets.token_hex(16)
+        session["learn_sid"] = learn_sid
+
+    # Derive query_key server-side from search_token when available
+    server_query_key = ""
+    server_marketplace = ""
+    if search_token and len(search_token) == 32:
+        with _cache_lock:
+            entry = _search_cache.get(search_token)
+            if entry is not None:
+                owner = str(entry.get("owner") or "")
+                if not owner or secrets.compare_digest(owner, str(session.get("csrf_token") or "")):
+                    raw_query = str(entry.get("search_query") or "")
+                    if raw_query:
+                        from index_engine import canonical_query as _cq
+                        server_query_key = _cq(raw_query)
+                    server_marketplace = str(entry.get("selected_platform") or "")
+
+    pushed = 0
+    for ev in raw_events:
+        if not isinstance(ev, dict):
+            continue
+        event_type = str(ev.get("type") or "").strip()
+        if event_type not in learn._LEARN_EVENT_TYPES:
+            continue
+
+        # event_id : fourni par le frontend (crypto.randomUUID), stocké tel quel
+        event_id = str(ev.get("eid") or "").strip()
+        if not event_id or len(event_id) > learn.LEARN_MAX_EVENT_ID_LEN:
+            continue
+
+        # query_key : toujours dérivé côté serveur du token quand possible
+        client_qk = str(ev.get("qk") or "").strip()[: learn.LEARN_MAX_QK_LEN]
+        query_key = server_query_key if server_query_key else client_qk
+        if not query_key:
+            continue
+
+        offer_key = str(ev.get("ok") or "").strip()[: learn.LEARN_MAX_OK_LEN]
+        marketplace = str(ev.get("mp") or server_marketplace or "").strip()[: learn.LEARN_MAX_MP_LEN]
+        meta = ev.get("m") if isinstance(ev.get("m"), dict) else {}
+
+        learn.learn_push(
+            event_id=event_id,
+            session_id=learn_sid,
+            event_type=event_type,
+            query_key=query_key,
+            offer_key=offer_key,
+            marketplace=marketplace,
+            meta=meta,
+        )
+        pushed += 1
+
+    return jsonify({"ok": True, "accepted": pushed})
+
+
 # Sources with a real page argument. retail_public connectors all implement
 # search_page and remain fail-fast on 400/403/429/challenges.
 EXPAND_PAGE_SOURCES = (
@@ -2602,6 +2692,7 @@ def _render_search_page(state, catalog_sites, active_marketplaces):
         billing_ready=_billing_ready(),
         csrf_token=session["csrf_token"],
         csp_nonce=g.csp_nonce,
+        learn_enabled=learn.LEARN_ENABLED,
     )
 
 
@@ -2706,5 +2797,5 @@ def search_share_page():
 
 
 if __name__ == "__main__":
-    _start_collector()
+    _start_background_workers()
     app.run(debug=False, use_reloader=False, host="127.0.0.1", port=5000)
