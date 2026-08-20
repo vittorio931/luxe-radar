@@ -171,12 +171,18 @@ def evaluate_result(item, query="", marketplace=""):
     # titre. Ce garde-fou est volontairement placé AVANT le mode recall : il
     # empêche `River Island ... stone` d'entrer dans une recherche Stone
     # Island tout en laissant les recherches génériques fonctionner.
+    # V3.8.0 : certains marchés (DHgate, 1688, etc.) publient des titres
+    # génériques sans nom de marque ; le contrôle est inutile pour eux.
+    _BRAND_BLIND_MARKETPLACES = {"DHgate", "1688"}
     query_brands = _detected_brands(query)
     if len(query_brands) == 1:
         requested_brand = next(iter(query_brands))
         title_brands = _detected_brands(title)
         if requested_brand not in title_brands:
-            return False, f"marque demandée absente ({requested_brand})"
+            if marketplace in _BRAND_BLIND_MARKETPLACES:
+                pass  # titles on these platforms never carry brand names
+            else:
+                return False, f"marque demandée absente ({requested_brand})"
 
     # V3.5.0 : même en mode couverture maximale, on retire les variantes de
     # modèle manifestement incompatibles avec une requête explicite. Cela

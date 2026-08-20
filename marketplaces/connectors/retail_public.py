@@ -70,6 +70,7 @@ _DIV_CARD_MARKERS = (
     "productcard",
     "product-tile",
     "product-item",
+    "display_product",
 )
 _DATA_NAME_RE = re.compile(r'data-(?:cnstrc|tp-gtm)-item-name="([^"]*)"', re.I)
 _DATA_PRICE_RE = re.compile(r'data-(?:cnstrc|tp-gtm)-item-price="([0-9.,]+)"', re.I)
@@ -498,6 +499,36 @@ class _PublicRetailBase(MarketplaceConnector):
                 _SOURCE_COOLDOWN_UNTIL[self.name] = time.monotonic() + _SOURCE_COOLDOWN_SECONDS
                 _source_health.record_blocked(self.name, "routes publiques refusees")
                 print(f"[{self.name}] aucune route publique exploitable -> pause temporaire")
+
+            # --- Fallback navigateur si le connecteur en a un configuré ---
+            # Se déclenche quand HTTP ne donne rien (0 cartes) quelle que soit la cause.
+            _has_browser = (
+                getattr(self, "browser_search_template", None)
+                or getattr(self, "browser_search_input_sel", None)
+            )
+            if not raw and _has_browser:
+                try:
+                    from .browser_fallback import search_via_browser, browser_available
+                    if browser_available():
+                        browser_results = search_via_browser(self, query, price_max, limit)
+                        if browser_results:
+                            return browser_results
+                except Exception as _bf_err:
+                    print(f"[{self.name}] fallback navigateur echoue: {_bf_err}")
+
+            # --- Fallback navigateur global: si tout echoue et qu'un selecteur cartes existe ---
+            if not raw and getattr(self, "browser_card_sel", None) and not _has_browser:
+                try:
+                    from .browser_fallback import search_via_browser, browser_available
+                    if browser_available():
+                        fallback_url = urls[0] if urls else self.base_url
+                        self.browser_search_template = fallback_url.replace(quote(query), "{q}")
+                        browser_results = search_via_browser(self, query, price_max, limit)
+                        if browser_results:
+                            return browser_results
+                except Exception as _bf_err:
+                    print(f"[{self.name}] fallback navigateur global echoue: {_bf_err}")
+
             results = []
             seen = set()
             parsed = 0
@@ -567,8 +598,19 @@ class FootshopConnector(_PublicRetailBase):
     name = "Footshop"
     display_name = "Footshop"
     base_url = "https://www.footshop.eu"
-    search_template = "https://www.footshop.eu/en/search?q={q}&page={page}"
+    search_templates = (
+        "https://www.footshop.eu/en/search?search_query={q}&page={page}",
+        "https://www.footshop.eu/en/search?q={q}&page={page}",
+    )
     allowed_path_hints = ("/en/", "/product", "/sneakers", "/shoes")
+    # Browser fallback: React SPA, recherche côté client
+    browser_search_template = "https://www.footshop.eu/en/search?search_query={q}"
+    browser_card_sel = "[itemprop='itemListElement']"
+    browser_title_sel = "h3"
+    browser_price_sel = "[class*='rice']"
+    browser_link_sel = "a"
+    browser_image_sel = "img"
+    browser_wait_ms = 5000
 
 
 class JDSportsConnector(_PublicRetailBase):
@@ -577,6 +619,14 @@ class JDSportsConnector(_PublicRetailBase):
     base_url = "https://www.jdsports.fr"
     search_template = "https://www.jdsports.fr/search/{slug}/?page={page}"
     allowed_path_hints = ("/product/", "/produit/", "/p/")
+    # Browser fallback: Playwright contourne le WAF
+    browser_search_template = "https://www.jdsports.fr/search/{q}/"
+    browser_card_sel = "[class*='productListItem']"
+    browser_title_sel = "img"
+    browser_price_sel = "[class*='rice']"
+    browser_link_sel = "a"
+    browser_image_sel = "img"
+    browser_wait_ms = 5000
 
 
 # V3.5.0 — FASHION / RUNNING EXPANSION
@@ -620,6 +670,14 @@ class AlltricksConnector(_PublicRetailBase):
         "https://www.alltricks.fr/recherche?s={q}&page={page}",
     )
     allowed_path_hints = ("/running", "/chauss", "/vetement", "/product", "/produit", "/p-")
+    # Browser fallback: HTTP 403, Playwright contourne
+    browser_search_template = "https://www.alltricks.fr/search?s={q}"
+    browser_card_sel = ".productCard_link-wrapper"
+    browser_title_sel = "h3"
+    browser_price_sel = "[class*='price']"
+    browser_link_sel = "a"
+    browser_image_sel = "img"
+    browser_wait_ms = 5000
 
 
 class DeporvillageConnector(_PublicRetailBase):
@@ -634,6 +692,14 @@ class DeporvillageConnector(_PublicRetailBase):
         "https://www.deporvillage.fr/catalogsearch/result?q={q}&page={page}",
     )
     allowed_path_hints = ()
+    # Browser fallback: HTTP 403, Playwright contourne
+    browser_search_template = "https://www.deporvillage.fr/catalogsearch/result?q={q}"
+    browser_card_sel = "[class*='card-component-wrapper'], [class*='Card-module']"
+    browser_title_sel = "[class*='card-title'], [class*='card-subtitle'], h2, h3"
+    browser_price_sel = "[class*='price'], [class*='Price']"
+    browser_link_sel = "a"
+    browser_image_sel = "img"
+    browser_wait_ms = 6000
 
 
 class RunningPointConnector(_PublicRetailBase):
@@ -656,6 +722,14 @@ class HardloopConnector(_PublicRetailBase):
         "https://www.hardloop.fr/recherche?q={q}&page={page}",
     )
     allowed_path_hints = ("/produits/", "/chauss", "/vetement", "/running", "/trail")
+    # Browser fallback: Next.js SPA, recherche 100% JS via barre de recherche
+    browser_search_input_sel = "input[type='search']"
+    browser_card_sel = "[class*='productCard']"
+    browser_title_sel = "[class*='productName'], [class*='ProductName']"
+    browser_price_sel = "[class*='rice']"
+    browser_link_sel = "a"
+    browser_image_sel = "img"
+    browser_wait_ms = 8000
 
 
 class EkosportConnector(_PublicRetailBase):
@@ -667,6 +741,14 @@ class EkosportConnector(_PublicRetailBase):
         "https://www.ekosport.fr/recherche?q={q}&page={page}",
     )
     allowed_path_hints = ("/chauss", "/vetement", "/running", "/trail", "/p-")
+    # Browser fallback: Angular SPA, Cloudflare protège l'accès
+    browser_search_template = "https://www.ekosport.fr/search?q={q}&page=1"
+    browser_card_sel = "[class*='product'], [class*='item'], article"
+    browser_title_sel = "[class*='name'], [class*='title'], h2, h3, a"
+    browser_price_sel = "[class*='rice']"
+    browser_link_sel = "a"
+    browser_image_sel = "img"
+    browser_wait_ms = 8000
 
 
 class CourirConnector(_PublicRetailBase):
@@ -700,3 +782,11 @@ class MisterRunningConnector(_PublicRetailBase):
         "https://www.misterrunning.com/en/search/?term={q}&p={page}",
     )
     allowed_path_hints = ("/running", "/shoes", "/apparel", "/en/")
+    # Browser fallback: Clerk.io, recherche JS
+    browser_search_template = "https://www.misterrunning.com/en/search/?keywords={q}"
+    browser_card_sel = "[class*='inner_item']"
+    browser_title_sel = "[class*='name']"
+    browser_price_sel = "[class*='rice']"
+    browser_link_sel = "a"
+    browser_image_sel = "img"
+    browser_wait_ms = 8000

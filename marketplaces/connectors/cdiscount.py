@@ -768,4 +768,24 @@ class CdiscountConnector(MarketplaceConnector):
                 for item in retained[:8]
             )[:1200]
             print(f"[Cdiscount][SAMPLE] {preview}")
+
+        # --- Fallback navigateur si HTTP ne donne rien (Cloudflare) ---
+        if not retained:
+            try:
+                from marketplaces.connectors.browser_fallback import search_via_browser, browser_available
+                if browser_available():
+                    self.browser_search_template = "https://www.cdiscount.com/search/10/{q}.html"
+                    self.browser_card_sel = "article, [class*='product']"
+                    self.browser_title_sel = "[class*='name'], [class*='title'], h2, h3, a"
+                    self.browser_price_sel = "[class*='rice']"
+                    self.browser_link_sel = "a"
+                    self.browser_image_sel = "img"
+                    self.browser_wait_ms = 8000
+                    browser_results = search_via_browser(self, query, price_max, limit)
+                    if browser_results:
+                        print(f"[Cdiscount] Fallback navigateur: {len(browser_results)} resultats")
+                        return browser_results
+            except Exception as _bf_err:
+                print(f"[Cdiscount] fallback navigateur echoue: {_bf_err}")
+
         return retained
