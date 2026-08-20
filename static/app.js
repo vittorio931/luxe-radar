@@ -23,12 +23,12 @@ let inventory = storedArray('inventory',1000);
 let recentlyViewed = storedArray('recentlyViewed',50);
 let subscription = store.get('subscription', {plan:'free',trialEnds:null});
 let visibleResults = [...(boot.initialResults || [])];
-let settings = {...{theme:'light', accent:'blue', compact:false, radarDense:false, radarFocus:false, resultView:'grid', reducedMotion:false, autoLoad:true, experienceMode:'essential', language:'fr',uiVersion:371}, ...store.get('settings', {})};
-if ((Number(settings.uiVersion)||0) < 371) { settings={...settings,theme:settings.theme||'light',accent:settings.accent||'blue',experienceMode:settings.experienceMode||'essential',uiVersion:371,resultView:settings.resultView||'grid'}; store.set('settings',settings); }
+let settings = {...{theme:'light', accent:'blue', compact:false, radarDense:false, radarFocus:false, resultView:'grid', reducedMotion:false, autoLoad:true, experienceMode:'expert', language:'fr',uiVersion:372}, ...store.get('settings', {})};
+if ((Number(settings.uiVersion)||0) < 372) { settings={...settings,theme:settings.theme||'light',accent:settings.accent||'blue',experienceMode:'expert',uiVersion:372,resultView:settings.resultView||'grid'}; store.set('settings',settings); }
 const requestedLanguage=new URLSearchParams(window.location.search).get('lang');
 if(['fr','en'].includes(requestedLanguage)){settings.language=requestedLanguage;store.set('settings',settings)}
 const systemTheme=window.matchMedia('(prefers-color-scheme: light)');
-if (!settings.experienceMode) settings.experienceMode = settings.simpleMode === false ? 'expert' : 'essential';
+if (!settings.experienceMode) settings.experienceMode = settings.simpleMode === false ? 'expert' : 'expert';
 if(!['lime','cyan','violet','rose','orange','blue','red','gold','mint'].includes(settings.accent))settings.accent='blue';
 if(!['grid','list'].includes(settings.resultView))settings.resultView='grid';
 delete settings.simpleMode;
