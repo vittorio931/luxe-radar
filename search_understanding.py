@@ -35,6 +35,28 @@ BRAND_ALIASES = {
     "The North Face": ("the north face", "north face", "tnf"),
     "Ralph Lauren": ("ralph lauren", "polo ralph lauren"),
     "Essentials": ("essentials", "fear of god essentials", "fog essentials"),
+    "Nike": ("nike", "nkike", "nikee", "nikke"),
+    "Adidas": ("adidas", "addidas", "adiddas"),
+    "Puma": ("puma", "pumma"),
+    "Vans": ("vans", "vanss"),
+    "Dior": ("dior", "diior"),
+    "Hoka": ("hoka", "hoka one one", "hokaa", "hkka"),
+    "Asics": ("asics", "asisc"),
+    "Reebok": ("reebok", "reeebok"),
+    "Jordan": ("jordan", "jordann"),
+    "Salomon": ("salomon", "saulmon", "salomn"),
+    "Saucony": ("saucony", "sauconi"),
+    "Converse": ("converse", "converce"),
+    "Carhartt": ("carhartt", "carhart"),
+    "Timberland": ("timberland", "timbrland"),
+    "Tommy Hilfiger": ("tommy hilfiger", "tommy hilfigar"),
+    "Lacoste": ("lacoste", "lacost"),
+    "Burberry": ("burberry", "burbery"),
+    "Moncler": ("moncler", "moncleer"),
+    "Gucci": ("gucci", "gucchi"),
+    "Prada": ("prada", "pradda"),
+    "Balenciaga": ("balenciaga", "balanciaga"),
+    "Patagonia": ("patagonia", "patagoina"),
 }
 for _brand in MARQUES_MODELES:
     BRAND_ALIASES.setdefault(_brand, (_brand,))
@@ -195,12 +217,12 @@ def _best_brand(tokens: list[str]):
                 chunk = " ".join(tokens[i : i + win_len])
                 target = " ".join(at)
                 r = _ratio(chunk, target)
-                threshold = 0.87 if win_len > 1 else (0.88 if len(target) >= 5 else 0.94)
+                threshold = 0.87 if win_len > 1 else (0.78 if len(target) >= 5 else 0.86)
                 if chunk == target:
                     r = 1.0
                 contextual = False
                 if r < threshold:
-                    relaxed = 0.78 if win_len > 1 else (0.74 if len(target) >= 4 else 0.86)
+                    relaxed = 0.78 if win_len > 1 else (0.70 if len(target) >= 4 else 0.80)
                     if r >= relaxed and _model_context_score(tokens, brand, i, win_len) >= 0.82:
                         contextual = True
                 if (r >= threshold or contextual) and (best is None or r > best[0]):
