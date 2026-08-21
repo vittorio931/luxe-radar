@@ -144,6 +144,15 @@ GENERIC_MODEL_TOKENS = {
     "short", "shorts", "jacket", "veste", "ensemble", "set", "shoes", "shoe", "sneaker", "polo",
 }
 
+# Modèles qui sont en réalité des "lignes" produit et non des modèles
+# exclusifs.  « Nike Trail » ne doit pas rejeter « Nike Pegasus Trail 5 » :
+#Trail est une famille, pas un modèle singulier.  Quand la requête demande
+#un de ces modèles-ligne, la détection d'un sous-modèle spécifique dans le
+#titre est un Signal positif, pas un conflit.
+NON_EXCLUSIVE_LINE_MODELS = {
+    "trail", "miler", "dri-fit adv", "dri fit adv",
+}
+
 IMPORTANT_DESCRIPTORS = {
     "trail", "running", "run", "hybrid", "miler", "tech", "fleece", "goretex", "gore", "tex",
     "waterproof", "reflective", "windrunner", "division", "pro", "elite", "performance",
@@ -620,8 +629,15 @@ def recognize(title, query, marketplace=None, extra_text=""):
     if profile.model and profile.brand:
         detected_model = _detect_known_model_in_text(combined, profile.brand)
         if detected_model and detected_model != profile.model:
-            score -= 38
-            conflicts.append(f"autre modèle explicite : {detected_model}")
+            # Les modèles-ligne (Trail, Miler...) sont des familles : trouver
+            # un sous-modèle spécifique (Pegasus, Juniper...) dans le titre
+            # est un signal positif, pas un conflit d'identité.
+            if normalize(profile.model) in NON_EXCLUSIVE_LINE_MODELS:
+                score += 8
+                reasons.append(f"sous-modèle {detected_model} dans la ligne {profile.model}")
+            else:
+                score -= 38
+                conflicts.append(f"autre modèle explicite : {detected_model}")
 
     if profile.model:
         requested_variants = _requested_trailing_model_variants(profile)
