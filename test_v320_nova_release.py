@@ -7,8 +7,8 @@ html=(root/'templates'/'index.html').read_text(encoding='utf-8')
 css=(root/'static'/'app.css').read_text(encoding='utf-8')
 js=(root/'static'/'app.js').read_text(encoding='utf-8')
 sw=(root/'static'/'sw.js').read_text(encoding='utf-8')
-assert 'APP_VERSION = "3.7.1"' in app and 'ASSET_VERSION = "20260816-371"' in app
-assert 'luxe-radar-shell-v371' in sw and '20260816-371' in sw
+assert 'APP_VERSION = "3.8.0"' in app and 'ASSET_VERSION = "20260821-380"' in app
+assert 'luxe-radar-shell-v371' in sw and '20260821-380' in sw
 assert 'identity = request.args.get("identity", "confirmed")' in app
 assert 'identity_order = {"fort": 0, "possible": 1, "rejet": 2}' in app
 assert "Le HTML n'attend plus eBay ni aucun autre marchand" in app
