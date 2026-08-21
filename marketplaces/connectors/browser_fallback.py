@@ -97,6 +97,7 @@ def search_via_browser(
                     print(f"[{name}] Fallback navigateur -> {url[:100]}")
                     page.goto(url, wait_until="domcontentloaded", timeout=timeout_ms)
                     page.wait_for_timeout(wait_ms)
+                    _scroll_and_settle(page, card_sel, timeout_ms)
                     navigated = True
                 elif input_sel and base_url:
                     print(f"[{name}] Fallback navigateur (input) -> {base_url}")
@@ -107,6 +108,7 @@ def search_via_browser(
                         inp.fill(query)
                         inp.press("Enter")
                         page.wait_for_timeout(wait_ms)
+                        _scroll_and_settle(page, card_sel, timeout_ms)
                         navigated = True
                     except Exception as e:
                         print(f"[{name}] Erreur input recherche: {e}")
@@ -114,8 +116,15 @@ def search_via_browser(
                 if not navigated:
                     return []
 
-                # Cherche les cartes produit
+                # Retry: si aucune carte trouvée après le premier settle, scroll
+                # une dernière fois avant d'abandonner (certains sites SPA ont un
+                # délai de hydratation après le dernier réseau idle).
                 cards = page.locator(card_sel)
+                if cards.count() == 0:
+                    page.wait_for_timeout(2000)
+                    _scroll_and_settle(page, card_sel, timeout_ms)
+                    cards = page.locator(card_sel)
+
                 count = min(cards.count(), max(limit * 3, 60))
                 print(f"[{name}] Navigateur: {cards.count()} cartes trouvees, {count} analysees")
 
@@ -247,3 +256,31 @@ def _parse_price(text):
         except ValueError:
             return None
     return None
+
+
+def _scroll_and_settle(page, card_sel: str, timeout_ms: int):
+    """Scroll progressif + attente réseau pour sites SPA.
+
+    Les sites React/Next.js hydratent après le premier paint. On scrolle
+    progressivement pour déclencher le lazy loading puis on attend que le
+    réseau soit inactif (plus fiable qu'un simple timeout fixe).
+    """
+    max_scrolls = 4
+    for _ in range(max_scrolls):
+        try:
+            page.evaluate("window.scrollBy(0, window.innerHeight * 0.8)", timeout=3000)
+        except Exception:
+            break
+        page.wait_for_timeout(800)
+        try:
+            cards = page.locator(card_sel)
+            if cards.count() > 0:
+                break
+        except Exception:
+            pass
+    # Network settle : attend que les requêtes XHR/fetch soient terminées.
+    try:
+        page.wait_for_load_state("networkidle", timeout=min(timeout_ms, 8000))
+    except Exception:
+        pass
+    page.wait_for_timeout(1000)
