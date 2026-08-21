@@ -59,14 +59,14 @@ _IS_DATACENTER = _ENV == "render"
 # Durees de cooldown : longues pour un datacenter (egress souvent bloque par
 # les marchands), courtes en local pour re-tester vite apres une reprise.
 COOLDOWN_BLOCKED_SECONDS = 600 if _IS_DATACENTER else 90
-COOLDOWN_EMPTY_SECONDS = 300 if _IS_DATACENTER else 60
-COOLDOWN_TIMEOUT_SECONDS = 120 if _IS_DATACENTER else 30
+COOLDOWN_EMPTY_SECONDS = 120 if _IS_DATACENTER else 60
+COOLDOWN_TIMEOUT_SECONDS = 90 if _IS_DATACENTER else 30
 
 # Une source vide ET lente (temps reseau significatif) est probablement bloquee
 # ou indisponible pour cet environnement : on arrete d'y consacrer des workers.
 EMPTY_SLOW_SECONDS = 4.0
 CONSECUTIVE_EMPTY_TO_DEPRIORITIZE = 2
-CONSECUTIVE_FAILURES_TO_COOLDOWN = 2
+CONSECUTIVE_FAILURES_TO_COOLDOWN = 3
 
 BLOCKED_HTTP_STATUSES = {400, 403, 407, 429}
 
@@ -227,7 +227,7 @@ class SourceHealthRegistry:
                 return
             entry.consecutive_empty += 1
             if (
-                entry.consecutive_empty >= 1
+                entry.consecutive_empty >= 2
                 and (network_elapsed or 0.0) >= EMPTY_SLOW_SECONDS
             ):
                 entry.cooldown_until = time.time() + COOLDOWN_EMPTY_SECONDS
