@@ -1,4 +1,4 @@
-"""V3.7.2 : QUALITÉ + RAPPEL (Sous-total V3.7.1).
+"""V3.7.2 : QUALITÉ + RAPPEL (Sous-total V3.8.0).
 
 Vérifie les corrections de qualité/rappel :
 - Bug 1 : le rejet d'identité produit ne garde JAMAIS de fausse correspondance,
@@ -91,7 +91,7 @@ def main():
     assert "LUXE_RADAR_SOURCE_MAX_CAP" in RADAR
     assert "_SOURCE_MAX_CAP" in RADAR
     assert "160" in RADAR
-    # Compatibilité V3.7.1 : les bornes de rappel restent en place.
+    # Compatibilité V3.8.0 : les bornes de rappel restent en place.
     assert '"eBay": 100' in APP
     assert '"Grailed": 36' in APP
     assert "next_recall_limit = min(100" in APP

@@ -55,8 +55,8 @@ def _parse_intent(query):
 
 
 app = Flask(__name__)
-APP_VERSION = "3.7.1"
-ASSET_VERSION = "20260816-371"
+APP_VERSION = "3.8.0"
+ASSET_VERSION = "20260821-380"
 IS_PRODUCTION = os.environ.get("LUXE_RADAR_ENV", "development").lower() == "production"
 IS_RENDER_RUNTIME = bool(
     os.environ.get("RENDER")
