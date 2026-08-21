@@ -1811,9 +1811,18 @@ def _collecter_cartes(
             "height": 1000,
         },
         locale="en-US",
+        user_agent=(
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+            "AppleWebKit/537.36 (KHTML, like Gecko) "
+            "Chrome/126.0.0.0 Safari/537.36"
+        ),
     )
 
     page = context.new_page()
+    page.add_init_script(
+        "Object.defineProperty(navigator, 'webdriver', "
+        "{get: () => undefined})"
+    )
 
     try:
         for route in routes:
@@ -1998,7 +2007,8 @@ def decouvrir_cartes_playwright(
 
     with sync_playwright() as p:
         browser = p.chromium.launch(
-            headless=True
+            headless=True,
+            args=["--disable-blink-features=AutomationControlled"],
         )
 
         try:
@@ -2042,7 +2052,8 @@ def decouvrir_cartes_playwright(
         )
 
         browser = p.chromium.launch(
-            headless=False
+            headless=False,
+            args=["--disable-blink-features=AutomationControlled"],
         )
 
         try:

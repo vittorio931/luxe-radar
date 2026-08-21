@@ -70,6 +70,7 @@ _DIV_CARD_MARKERS = (
     "productcard",
     "product-tile",
     "product-item",
+    "display_product",
 )
 _DATA_NAME_RE = re.compile(r'data-(?:cnstrc|tp-gtm)-item-name="([^"]*)"', re.I)
 _DATA_PRICE_RE = re.compile(r'data-(?:cnstrc|tp-gtm)-item-price="([0-9.,]+)"', re.I)
@@ -498,6 +499,36 @@ class _PublicRetailBase(MarketplaceConnector):
                 _SOURCE_COOLDOWN_UNTIL[self.name] = time.monotonic() + _SOURCE_COOLDOWN_SECONDS
                 _source_health.record_blocked(self.name, "routes publiques refusees")
                 print(f"[{self.name}] aucune route publique exploitable -> pause temporaire")
+
+            # --- Fallback navigateur si le connecteur en a un configuré ---
+            # Se déclenche quand HTTP ne donne rien (0 cartes) quelle que soit la cause.
+            _has_browser = (
+                getattr(self, "browser_search_template", None)
+                or getattr(self, "browser_search_input_sel", None)
+            )
+            if not raw and _has_browser:
+                try:
+                    from .browser_fallback import search_via_browser, browser_available
+                    if browser_available():
+                        browser_results = search_via_browser(self, query, price_max, limit)
+                        if browser_results:
+                            return browser_results
+                except Exception as _bf_err:
+                    print(f"[{self.name}] fallback navigateur echoue: {_bf_err}")
+
+            # --- Fallback navigateur global: si tout echoue et qu'un selecteur cartes existe ---
+            if not raw and getattr(self, "browser_card_sel", None) and not _has_browser:
+                try:
+                    from .browser_fallback import search_via_browser, browser_available
+                    if browser_available():
+                        fallback_url = urls[0] if urls else self.base_url
+                        self.browser_search_template = fallback_url.replace(quote(query), "{q}")
+                        browser_results = search_via_browser(self, query, price_max, limit)
+                        if browser_results:
+                            return browser_results
+                except Exception as _bf_err:
+                    print(f"[{self.name}] fallback navigateur global echoue: {_bf_err}")
+
             results = []
             seen = set()
             parsed = 0
@@ -567,8 +598,19 @@ class FootshopConnector(_PublicRetailBase):
     name = "Footshop"
     display_name = "Footshop"
     base_url = "https://www.footshop.eu"
-    search_template = "https://www.footshop.eu/en/search?q={q}&page={page}"
+    search_templates = (
+        "https://www.footshop.eu/en/search?search_query={q}&page={page}",
+        "https://www.footshop.eu/en/search?q={q}&page={page}",
+    )
     allowed_path_hints = ("/en/", "/product", "/sneakers", "/shoes")
+    # Browser fallback: React SPA, recherche côté client
+    browser_search_template = "https://www.footshop.eu/en/search?search_query={q}"
+    browser_card_sel = "[itemprop='itemListElement']"
+    browser_title_sel = "h3"
+    browser_price_sel = "[class*='rice']"
+    browser_link_sel = "a"
+    browser_image_sel = "img"
+    browser_wait_ms = 5000
 
 
 class JDSportsConnector(_PublicRetailBase):
@@ -577,6 +619,14 @@ class JDSportsConnector(_PublicRetailBase):
     base_url = "https://www.jdsports.fr"
     search_template = "https://www.jdsports.fr/search/{slug}/?page={page}"
     allowed_path_hints = ("/product/", "/produit/", "/p/")
+    # Browser fallback: Playwright contourne le WAF
+    browser_search_template = "https://www.jdsports.fr/search/{q}/"
+    browser_card_sel = "[class*='productListItem']"
+    browser_title_sel = "img"
+    browser_price_sel = "[class*='rice']"
+    browser_link_sel = "a"
+    browser_image_sel = "img"
+    browser_wait_ms = 5000
 
 
 # V3.5.0 — FASHION / RUNNING EXPANSION
@@ -620,6 +670,14 @@ class AlltricksConnector(_PublicRetailBase):
         "https://www.alltricks.fr/recherche?s={q}&page={page}",
     )
     allowed_path_hints = ("/running", "/chauss", "/vetement", "/product", "/produit", "/p-")
+    # Browser fallback: HTTP 403, Playwright contourne
+    browser_search_template = "https://www.alltricks.fr/search?s={q}"
+    browser_card_sel = ".productCard_link-wrapper"
+    browser_title_sel = "h3"
+    browser_price_sel = "[class*='price']"
+    browser_link_sel = "a"
+    browser_image_sel = "img"
+    browser_wait_ms = 5000
 
 
 class DeporvillageConnector(_PublicRetailBase):
@@ -634,6 +692,14 @@ class DeporvillageConnector(_PublicRetailBase):
         "https://www.deporvillage.fr/catalogsearch/result?q={q}&page={page}",
     )
     allowed_path_hints = ()
+    # Browser fallback: HTTP 403, Playwright contourne
+    browser_search_template = "https://www.deporvillage.fr/catalogsearch/result?q={q}"
+    browser_card_sel = "[class*='card-component-wrapper'], [class*='Card-module']"
+    browser_title_sel = "[class*='card-title'], [class*='card-subtitle'], h2, h3"
+    browser_price_sel = "[class*='price'], [class*='Price']"
+    browser_link_sel = "a"
+    browser_image_sel = "img"
+    browser_wait_ms = 6000
 
 
 class RunningPointConnector(_PublicRetailBase):
@@ -656,6 +722,14 @@ class HardloopConnector(_PublicRetailBase):
         "https://www.hardloop.fr/recherche?q={q}&page={page}",
     )
     allowed_path_hints = ("/produits/", "/chauss", "/vetement", "/running", "/trail")
+    # Browser fallback: Next.js SPA, recherche 100% JS via barre de recherche
+    browser_search_input_sel = "input[type='search']"
+    browser_card_sel = "[class*='productCard']"
+    browser_title_sel = "[class*='productName'], [class*='ProductName']"
+    browser_price_sel = "[class*='rice']"
+    browser_link_sel = "a"
+    browser_image_sel = "img"
+    browser_wait_ms = 8000
 
 
 class EkosportConnector(_PublicRetailBase):
@@ -667,6 +741,14 @@ class EkosportConnector(_PublicRetailBase):
         "https://www.ekosport.fr/recherche?q={q}&page={page}",
     )
     allowed_path_hints = ("/chauss", "/vetement", "/running", "/trail", "/p-")
+    # Browser fallback: Angular SPA, Cloudflare protège l'accès
+    browser_search_template = "https://www.ekosport.fr/search?q={q}&page=1"
+    browser_card_sel = "[class*='product'], [class*='item'], article"
+    browser_title_sel = "[class*='name'], [class*='title'], h2, h3, a"
+    browser_price_sel = "[class*='rice']"
+    browser_link_sel = "a"
+    browser_image_sel = "img"
+    browser_wait_ms = 8000
 
 
 class CourirConnector(_PublicRetailBase):
@@ -700,3 +782,429 @@ class MisterRunningConnector(_PublicRetailBase):
         "https://www.misterrunning.com/en/search/?term={q}&p={page}",
     )
     allowed_path_hints = ("/running", "/shoes", "/apparel", "/en/")
+    # Browser fallback: Clerk.io, recherche JS
+    browser_search_template = "https://www.misterrunning.com/en/search/?keywords={q}"
+    browser_card_sel = "[class*='inner_item']"
+    browser_title_sel = "[class*='name']"
+    browser_price_sel = "[class*='rice']"
+    browser_link_sel = "a"
+    browser_image_sel = "img"
+    browser_wait_ms = 8000
+
+
+# ---------------------------------------------------------------------------
+# Brand direct stores — Phase 1
+# ---------------------------------------------------------------------------
+
+class NikeConnector(_PublicRetailBase):
+    name = "Nike"
+    display_name = "Nike"
+    base_url = "https://www.nike.fr"
+    enabled = False  # SPA React: browser finds 0 cards, selectors need real inspection
+    search_templates = (
+        "https://www.nike.fr/fr/search?q={q}&page={page}",
+        "https://www.nike.com/fr/search?q={q}&page={page}",
+    )
+    allowed_path_hints = ("/fr/", "/t/", "/product", "/p/")
+    browser_search_template = "https://www.nike.fr/fr/search?q={q}"
+    browser_card_sel = "[class*='product-card']"
+    browser_title_sel = "[class*='product-card__title']"
+    browser_price_sel = "[class*='product-price']"
+    browser_link_sel = "a"
+    browser_image_sel = "img"
+    browser_wait_ms = 8000
+
+
+class AdidasConnector(_PublicRetailBase):
+    name = "Adidas"
+    display_name = "Adidas"
+    base_url = "https://www.adidas.fr"
+    enabled = False  # SPA React: browser finds 0 cards
+    search_templates = (
+        "https://www.adidas.fr/search?q={q}&page={page}",
+        "https://www.adidas.fr/recherche?q={q}&page={page}",
+    )
+    allowed_path_hints = ("/fr/", "/t/", "/product", "/p/")
+    browser_search_template = "https://www.adidas.fr/search?q={q}"
+    browser_card_sel = "[class*='product-card']"
+    browser_title_sel = "[class*='product-card__title']"
+    browser_price_sel = "[class*='product-price']"
+    browser_link_sel = "a"
+    browser_image_sel = "img"
+    browser_wait_ms = 8000
+
+
+class NewBalanceConnector(_PublicRetailBase):
+    name = "New Balance Store"
+    display_name = "New Balance Store"
+    base_url = "https://www.newbalance.fr"
+    enabled = False  # SPA React: browser finds 0 cards
+    search_templates = (
+        "https://www.newbalance.fr/fr/search?q={q}&page={page}",
+        "https://www.newbalance.fr/search?q={q}&page={page}",
+    )
+    allowed_path_hints = ("/fr/", "/product", "/p/")
+    browser_search_template = "https://www.newbalance.fr/fr/search?q={q}"
+    browser_card_sel = "[class*='product-card']"
+    browser_title_sel = "[class*='product-title']"
+    browser_price_sel = "[class*='product-price']"
+    browser_link_sel = "a"
+    browser_image_sel = "img"
+    browser_wait_ms = 6000
+
+
+class OnRunningConnector(_PublicRetailBase):
+    name = "On Store"
+    display_name = "On Store"
+    base_url = "https://www.on-running.com"
+    enabled = False  # SPA React: browser finds 0 cards
+    search_templates = (
+        "https://www.on-running.com/fr-fr/search?q={q}&page={page}",
+        "https://www.on-running.com/fr-fr/search?query={q}&page={page}",
+    )
+    allowed_path_hints = ("/fr-fr/", "/product", "/p/")
+    browser_search_template = "https://www.on-running.com/fr-fr/search?q={q}"
+    browser_card_sel = "[class*='product-card']"
+    browser_title_sel = "[class*='product-card__title'], h3"
+    browser_price_sel = "[class*='price']"
+    browser_link_sel = "a"
+    browser_image_sel = "img"
+    browser_wait_ms = 6000
+
+
+class SalomonStoreConnector(_PublicRetailBase):
+    name = "Salomon Store"
+    display_name = "Salomon Store"
+    base_url = "https://www.salomon.com"
+    search_templates = (
+        "https://www.salomon.com/fr-fr/search.html?q={q}&page={page}",
+        "https://www.salomon.com/fr-fr/search?q={q}&page={page}",
+    )
+    allowed_path_hints = ("/fr-fr/", "/product", "/p/")
+    browser_search_template = "https://www.salomon.com/fr-fr/search.html?q={q}"
+    browser_card_sel = "[class*='product-card']"
+    browser_title_sel = "[class*='product-card__title'], h3"
+    browser_price_sel = "[class*='price']"
+    browser_link_sel = "a"
+    browser_image_sel = "img"
+    browser_wait_ms = 6000
+
+
+class VejaStoreConnector(_PublicRetailBase):
+    name = "Veja Store"
+    display_name = "Veja Store"
+    base_url = "https://www.veja-store.com"
+    enabled = False  # SPA React: browser finds 0 cards
+    search_templates = (
+        "https://www.veja-store.com/fr/recherche?q={q}&page={page}",
+        "https://www.veja-store.com/fr/search?q={q}&page={page}",
+    )
+    allowed_path_hints = ("/fr/", "/product", "/chaussure", "/sneaker")
+
+
+class PumaConnector(_PublicRetailBase):
+    name = "Puma"
+    display_name = "Puma"
+    base_url = "https://www.puma.com"
+    enabled = False  # SPA React: browser finds 0 cards
+    search_templates = (
+        "https://www.puma.com/fr/fr/search?q={q}&page={page}",
+        "https://www.puma.com/fr/search?q={q}&page={page}",
+    )
+    allowed_path_hints = ("/fr/fr/", "/product", "/p/")
+    browser_search_template = "https://www.puma.com/fr/fr/search?q={q}"
+    browser_card_sel = "[class*='product-card']"
+    browser_title_sel = "[class*='product-card__title'], h3"
+    browser_price_sel = "[class*='price']"
+    browser_link_sel = "a"
+    browser_image_sel = "img"
+    browser_wait_ms = 6000
+
+
+class ConverseConnector(_PublicRetailBase):
+    name = "Converse"
+    display_name = "Converse"
+    base_url = "https://www.converse.fr"
+    enabled = False  # SPA React: browser finds 0 cards
+    search_templates = (
+        "https://www.converse.fr/search?q={q}&page={page}",
+        "https://www.converse.fr/recherche?q={q}&page={page}",
+    )
+    allowed_path_hints = ("/fr/", "/product", "/chaussure", "/p/")
+    browser_search_template = "https://www.converse.fr/search?q={q}"
+    browser_card_sel = "[class*='product-card']"
+    browser_title_sel = "[class*='product-card__title'], h3"
+    browser_price_sel = "[class*='price']"
+    browser_link_sel = "a"
+    browser_image_sel = "img"
+    browser_wait_ms = 6000
+
+
+# ---------------------------------------------------------------------------
+# Multi-brand retailers — Phase 2
+# ---------------------------------------------------------------------------
+
+class FootLockerConnector(_PublicRetailBase):
+    name = "Foot Locker"
+    display_name = "Foot Locker"
+    base_url = "https://www.footlocker.fr"
+    search_templates = (
+        "https://www.footlocker.fr/fr/search?query={q}&page={page}",
+        "https://www.footlocker.fr/fr/search?q={q}&page={page}",
+    )
+    allowed_path_hints = ("/fr/", "/product", "/chaussure", "/p/")
+    browser_search_template = "https://www.footlocker.fr/fr/search?query={q}"
+    browser_card_sel = "[class*='ProductCard']"
+    browser_title_sel = "[class*='product-card__title'], h3"
+    browser_price_sel = "[class*='product-card__price'], [class*='price']"
+    browser_link_sel = "a"
+    browser_image_sel = "img"
+    browser_wait_ms = 6000
+
+
+class SneakersnstuffConnector(_PublicRetailBase):
+    name = "Sneakersnstuff"
+    display_name = "Sneakersnstuff"
+    base_url = "https://sneakersnstuff.com"
+    enabled = False  # Browser finds 0 cards
+    search_templates = (
+        "https://sneakersnstuff.com/fr/search?q={q}&page={page}",
+        "https://sneakersnstuff.com/fr/search?q={q}",
+    )
+    allowed_path_hints = ("/fr/", "/product", "/sneaker")
+    browser_search_template = "https://sneakersnstuff.com/fr/search?q={q}"
+    browser_card_sel = "[class*='product-card']"
+    browser_title_sel = "[class*='product-card__title'], h3"
+    browser_price_sel = "[class*='price']"
+    browser_link_sel = "a"
+    browser_image_sel = "img"
+    browser_wait_ms = 6000
+
+
+class EndClothingConnector(_PublicRetailBase):
+    name = "End Clothing"
+    display_name = "End Clothing"
+    base_url = "https://www.endclothing.com"
+    enabled = False  # Browser finds 0 cards
+    search_templates = (
+        "https://www.endclothing.com/fr/search?q={q}&page={page}",
+        "https://www.endclothing.com/fr/search?query={q}&page={page}",
+    )
+    allowed_path_hints = ("/fr/", "/product", "/p/")
+    browser_search_template = "https://www.endclothing.com/fr/search?q={q}"
+    browser_card_sel = "[class*='product-card']"
+    browser_title_sel = "[class*='product-card__title'], h3"
+    browser_price_sel = "[class*='price']"
+    browser_link_sel = "a"
+    browser_image_sel = "img"
+    browser_wait_ms = 6000
+
+
+class CettireConnector(_PublicRetailBase):
+    name = "Cettire"
+    display_name = "Cettire"
+    base_url = "https://www.cettire.com"
+    enabled = False  # HTTP 403 blocked
+    search_templates = (
+        "https://www.cettire.com/fr/search?q={q}&page={page}",
+        "https://www.cettire.com/fr/recherche?q={q}&page={page}",
+    )
+    allowed_path_hints = ("/fr/", "/product", "/p/")
+
+
+class TheOutnetConnector(_PublicRetailBase):
+    name = "The Outnet"
+    display_name = "The Outnet"
+    base_url = "https://www.theoutnet.com"
+    enabled = False  # HTTP 200 but parses 0 cards (JS-rendered)
+    search_templates = (
+        "https://www.theoutnet.com/fr/fr/search?q={q}&page={page}",
+        "https://www.theoutnet.com/fr/fr/search?query={q}&page={page}",
+    )
+    allowed_path_hints = ("/fr/fr/", "/product", "/p/")
+
+
+# ---------------------------------------------------------------------------
+# French fashion / streetwear — Phase 3
+# ---------------------------------------------------------------------------
+
+class RoujeConnector(_PublicRetailBase):
+    name = "Rouje"
+    display_name = "Rouje"
+    base_url = "https://rouje.com"
+    enabled = False  # HTTP 200 but parses 0 cards (JS-rendered)
+    search_templates = (
+        "https://rouje.com/fr/recherche?q={q}&page={page}",
+        "https://rouje.com/recherche?q={q}&page={page}",
+    )
+    allowed_path_hints = ("/fr/", "/product", "/chaussure")
+
+
+class RepresentConnector(_PublicRetailBase):
+    name = "Represent"
+    display_name = "Represent"
+    base_url = "https://representclo.com"
+    enabled = False  # HTTP 200 but parses 0 cards (JS-rendered)
+    search_templates = (
+        "https://representclo.com/search?q={q}&page={page}",
+        "https://representclo.com/collections/all?q={q}&page={page}",
+    )
+    allowed_path_hints = ("/collections/", "/product", "/p/")
+
+
+class KithConnector(_PublicRetailBase):
+    name = "Kith"
+    display_name = "Kith"
+    base_url = "https://kith.com"
+    search_templates = (
+        "https://kith.com/search?q={q}&page={page}",
+        "https://kith.com/collections/all?q={q}&page={page}",
+    )
+    allowed_path_hints = ("/collections/", "/product", "/p/")
+    browser_search_template = "https://kith.com/search?q={q}"
+    browser_card_sel = "[class*='product-card']"
+    browser_title_sel = "[class*='product-card__title'], h3"
+    browser_price_sel = "[class*='price']"
+    browser_link_sel = "a"
+    browser_image_sel = "img"
+    browser_wait_ms = 6000
+
+
+class AsphaltgoldConnector(_PublicRetailBase):
+    name = "Asphaltgold"
+    display_name = "Asphaltgold"
+    base_url = "https://www.asphaltgold.com"
+    enabled = False  # Browser finds 0 cards
+    search_templates = (
+        "https://www.asphaltgold.com/search?q={q}&page={page}",
+        "https://www.asphaltgold.com/de/search?q={q}&page={page}",
+    )
+    allowed_path_hints = ("/search", "/product", "/p/")
+
+
+class BSTNConnector(_PublicRetailBase):
+    name = "BSTN"
+    display_name = "BSTN"
+    base_url = "https://www.bstn.com"
+    enabled = False  # Browser finds 0 cards
+    search_templates = (
+        "https://www.bstn.com/de/search?q={q}&page={page}",
+        "https://www.bstn.com/search?q={q}&page={page}",
+    )
+    allowed_path_hints = ("/de/", "/product", "/p/")
+    browser_search_template = "https://www.bstn.com/de/search?q={q}"
+    browser_card_sel = "[class*='product-card']"
+    browser_title_sel = "[class*='product-card__title'], h3"
+    browser_price_sel = "[class*='price']"
+    browser_link_sel = "a"
+    browser_image_sel = "img"
+    browser_wait_ms = 6000
+
+
+class EinhalbConnector(_PublicRetailBase):
+    name = "43einhalb"
+    display_name = "43einhalb"
+    base_url = "https://www.43einhalb.com"
+    enabled = False  # HTTP 403 blocked
+    search_templates = (
+        "https://www.43einhalb.com/search?q={q}&page={page}",
+        "https://www.43einhalb.com/de/search?q={q}&page={page}",
+    )
+    allowed_path_hints = ("/search", "/product", "/p/")
+    browser_search_template = "https://www.43einhalb.com/search?q={q}"
+    browser_card_sel = "[class*='product-card']"
+    browser_title_sel = "[class*='product-card__title'], h3"
+    browser_price_sel = "[class*='price']"
+    browser_link_sel = "a"
+    browser_image_sel = "img"
+    browser_wait_ms = 6000
+
+
+class LacedConnector(_PublicRetailBase):
+    name = "Laced"
+    display_name = "Laced"
+    base_url = "https://www.laced.fr"
+    enabled = False  # SSL error
+    search_templates = (
+        "https://www.laced.fr/search?q={q}&page={page}",
+        "https://www.laced.fr/fr/search?q={q}&page={page}",
+    )
+    allowed_path_hints = ("/search", "/product", "/p/")
+    browser_search_template = "https://www.laced.fr/search?q={q}"
+    browser_card_sel = "[class*='product-card']"
+    browser_title_sel = "[class*='product-card__title'], h3"
+    browser_price_sel = "[class*='price']"
+    browser_link_sel = "a"
+    browser_image_sel = "img"
+    browser_wait_ms = 6000
+
+
+class GaleriesLafayetteConnector(_PublicRetailBase):
+    name = "Galeries Lafayette"
+    display_name = "Galeries Lafayette"
+    base_url = "https://www.galerieslafayette.com"
+    enabled = False  # HTTP 403 blocked
+    search_templates = (
+        "https://www.galerieslafayette.com/c/search?q={q}&page={page}",
+        "https://www.galerieslafayette.com/recherche?q={q}&page={page}",
+    )
+    allowed_path_hints = ("/c/", "/product", "/p/")
+    browser_search_template = "https://www.galerieslafayette.com/c/search?q={q}"
+    browser_card_sel = "[class*='product-card']"
+    browser_title_sel = "[class*='product-card__title'], h3"
+    browser_price_sel = "[class*='price']"
+    browser_link_sel = "a"
+    browser_image_sel = "img"
+    browser_wait_ms = 8000
+
+
+class LaRedouteConnector(_PublicRetailBase):
+    name = "La Redoute"
+    display_name = "La Redoute"
+    base_url = "https://www.laredoute.fr"
+    enabled = False  # HTTP 403 blocked
+    search_templates = (
+        "https://www.laredoute.fr/recherche/pageresults.aspx?SearchType=Keyword&keywords={q}&page={page}",
+        "https://www.laredoute.fr/recherche?q={q}&page={page}",
+    )
+    allowed_path_hints = ("/pplp/", "/product", "/p/")
+    browser_search_template = "https://www.laredoute.fr/recherche/pageresults.aspx?SearchType=Keyword&keywords={q}"
+    browser_card_sel = "[class*='product-card'], [class*='productitem']"
+    browser_title_sel = "[class*='product-card__title'], [class*='product-title'], h3"
+    browser_price_sel = "[class*='price']"
+    browser_link_sel = "a"
+    browser_image_sel = "img"
+    browser_wait_ms = 6000
+
+
+class BazarChicConnector(_PublicRetailBase):
+    name = "BazarChic"
+    display_name = "BazarChic"
+    base_url = "https://www.bazarchic.com"
+    search_templates = (
+        "https://www.bazarchic.com/recherche?q={q}&page={page}",
+        "https://www.bazarchic.com/search?q={q}&page={page}",
+    )
+    allowed_path_hints = ("/recherche", "/product", "/p/")
+
+
+class CocoonCenterConnector(_PublicRetailBase):
+    name = "Cocooncenter"
+    display_name = "Cocooncenter"
+    base_url = "https://www.cocooncenter.com"
+    search_templates = (
+        "https://www.cocooncenter.com/recherche?q={q}&page={page}",
+        "https://www.cocooncenter.com/search?q={q}&page={page}",
+    )
+    allowed_path_hints = ("/recherche", "/product", "/p/")
+
+
+class MerlinConnector(_PublicRetailBase):
+    name = "Merlin"
+    display_name = "Merlin"
+    base_url = "https://www.merlin-pc.com"
+    search_templates = (
+        "https://www.merlin-pc.com/search?q={q}&page={page}",
+        "https://www.merlin-pc.com/recherche?q={q}&page={page}",
+    )
+    allowed_path_hints = ("/search", "/product", "/p/")

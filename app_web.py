@@ -533,24 +533,28 @@ _SESSION_DISK_CLEANUP_EVERY_SECONDS = 300
 # bloquées ensuite. Une recherche ciblée sur UNE marketplace reste synchrone.
 PROGRESSIVE_FAST_SOURCES = ("eBay",)
 PROGRESSIVE_BACKGROUND_SOURCES = (
-    # V3.5.0 : LUXE RADAR devient un comparateur mode/running spécialisé.
-    # V3.7 réordonne ensuite dynamiquement cette liste selon l'intention.
     "i-Run", "Direct Running", "Alltricks", "Deporvillage",
     "Vinted", "Zalando", "ASOS", "21RUN", "Running Point",
     "MisterRunning", "Hardloop", "Ekosport", "Courir", "SSENSE",
     "Cdiscount", "Spartoo", "Footshop", "JD Sports",
     "AliExpress", "DHgate", "67behaviour", "1688", "Grailed",
+    "Nike", "Adidas", "New Balance Store", "On Store", "Salomon Store",
+    "Veja Store", "Puma", "Converse", "Foot Locker", "Sneakersnstuff",
+    "End Clothing", "Cettire", "The Outnet", "Rouje", "Represent",
+    "Kith", "Asphaltgold", "BSTN", "43einhalb", "Laced",
+    "Galeries Lafayette", "La Redoute",
 )
 
 _RUNNING_BRANDS = {
     "On", "Asics", "Hoka", "Salomon", "Saucony", "Mizuno", "Brooks",
     "New Balance", "Nike", "Adidas", "Puma", "Under Armour",
+    "Veja", "Converse",
 }
 _LUXURY_FASHION_BRANDS = {
     "Stone Island", "C.P. Company", "Moncler", "Gucci", "Prada", "Dior",
     "Balenciaga", "Versace", "Burberry", "Off-White", "Supreme", "Stussy",
     "Palace", "Amiri", "Ralph Lauren", "Lacoste", "Carhartt", "Arc'teryx",
-    "The North Face", "Patagonia",
+    "The North Face", "Patagonia", "Represent", "Kith",
 }
 
 # Univers « Luxe » : requêtes réelles utilisées pour remplir le catalogue quand
@@ -587,21 +591,30 @@ def _progressive_source_order(query, active_marketplaces):
         "eBay", "i-Run", "Direct Running", "21RUN", "Running Point",
         "MisterRunning", "Alltricks", "Deporvillage", "Vinted", "Zalando",
         "ASOS", "Hardloop", "Ekosport", "Courir", "Footshop", "JD Sports",
+        "Nike", "Adidas", "New Balance Store", "On Store", "Salomon Store",
+        "Puma", "Converse", "Foot Locker", "Sneakersnstuff",
         "SSENSE", "Spartoo", "Cdiscount", "Grailed", "67behaviour",
         "AliExpress", "DHgate", "1688",
     ]
     fashion_priority = [
         "eBay", "Vinted", "SSENSE", "ASOS", "Zalando", "Grailed",
         "Courir", "Spartoo", "Footshop", "JD Sports", "Cdiscount",
-        "67behaviour", "AliExpress", "DHgate", "i-Run", "Direct Running",
-        "Alltricks", "Deporvillage", "21RUN", "Running Point",
-        "MisterRunning", "Hardloop", "Ekosport", "1688",
+        "Rouje", "Represent", "Kith", "Laced", "End Clothing",
+        "Cettire", "The Outnet", "Galeries Lafayette", "La Redoute",
+        "Nike", "Adidas", "Puma", "Converse", "Veja Store",
+        "67behaviour", "AliExpress", "DHgate",
+        "i-Run", "Direct Running", "Alltricks", "Deporvillage",
+        "21RUN", "Running Point", "MisterRunning", "Hardloop", "Ekosport", "1688",
     ]
     generic_priority = [
         "eBay", "Vinted", "ASOS", "Zalando", "SSENSE", "Courir",
-        "Spartoo", "Footshop", "JD Sports", "Grailed", "i-Run",
-        "Direct Running", "Alltricks", "Deporvillage", "21RUN",
-        "Running Point", "MisterRunning", "Hardloop", "Ekosport",
+        "Spartoo", "Footshop", "JD Sports", "Grailed",
+        "Nike", "Adidas", "New Balance Store", "Puma", "Converse",
+        "Foot Locker", "Sneakersnstuff", "End Clothing", "Cettire",
+        "The Outnet", "Laced", "Asphaltgold", "BSTN", "43einhalb",
+        "Galeries Lafayette", "La Redoute",
+        "i-Run", "Direct Running", "Alltricks", "Deporvillage",
+        "21RUN", "Running Point", "MisterRunning", "Hardloop", "Ekosport",
         "Cdiscount", "67behaviour", "AliExpress", "DHgate", "1688",
     ]
     if brand in _RUNNING_BRANDS or product_type == "chaussures":
