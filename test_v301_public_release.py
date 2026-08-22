@@ -13,8 +13,8 @@ billing = (root / "billing_stripe.py").read_text(encoding="utf-8")
 render = (root / "render.yaml").read_text(encoding="utf-8")
 sites = json.loads((root / "marketplaces" / "sites.json").read_text(encoding="utf-8"))["sites"]
 
-assert 'APP_VERSION = "3.8.0"' in app
-assert 'ASSET_VERSION = "20260821-380"' in app
+assert 'APP_VERSION = "3.8.1"' in app
+assert 'ASSET_VERSION = "20260822-381"' in app
 assert "Le HTML n'attend plus eBay ni aucun autre marchand" in app
 assert '"Spartoo", "Footshop", "JD Sports"' in app
 assert '90 if request.endpoint == "expand_results"' in app
