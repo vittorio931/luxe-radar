@@ -57,8 +57,8 @@ def _parse_intent(query):
 
 
 app = Flask(__name__)
-APP_VERSION = "3.8.0"
-ASSET_VERSION = "20260821-380"
+APP_VERSION = "3.8.1"
+ASSET_VERSION = "20260822-381"
 IS_PRODUCTION = os.environ.get("LUXE_RADAR_ENV", "development").lower() == "production"
 IS_RENDER_RUNTIME = bool(
     os.environ.get("RENDER")
@@ -573,6 +573,10 @@ def _rotating_luxury_query() -> str:
 def _progressive_source_order(query, active_marketplaces):
     """Met les marchands les plus plausibles et productifs en tête.
 
+    V3.8.1 : sources HTTP rapides (AliExpress, 67behaviour, DHgate, Cdiscount)
+    toujours en tête pour des résultats visibles en &lt;10s. Sources lentes
+    (eBay sans API, Vinted, ASOS) repoussées.
+
     L'ordre combine l'intention de la requête (running/fashion/générique) et la
     santé observée pour l'environnement courant :
     - source productive récente -> TIER A (devance la vague) ;
@@ -588,34 +592,37 @@ def _progressive_source_order(query, active_marketplaces):
         brand = None
         product_type = None
     running_priority = [
-        "eBay", "i-Run", "Direct Running", "21RUN", "Running Point",
-        "MisterRunning", "Alltricks", "Deporvillage", "Vinted", "Zalando",
-        "ASOS", "Hardloop", "Ekosport", "Courir", "Footshop", "JD Sports",
-        "Nike", "Adidas", "New Balance Store", "On Store", "Salomon Store",
-        "Puma", "Converse", "Foot Locker", "Sneakersnstuff",
-        "SSENSE", "Spartoo", "Cdiscount", "Grailed", "67behaviour",
-        "AliExpress", "DHgate", "1688",
+        "AliExpress", "67behaviour", "DHgate", "Cdiscount",
+        "i-Run", "Direct Running", "21RUN", "Running Point",
+        "MisterRunning", "Nike", "Adidas", "New Balance Store",
+        "On Store", "Salomon Store", "Puma", "Converse",
+        "Foot Locker", "Sneakersnstuff",
+        "eBay", "Vinted", "ASOS", "Zalando",
+        "Hardloop", "Ekosport", "Courir", "Footshop", "JD Sports",
+        "Alltricks", "Deporvillage",
+        "SSENSE", "Spartoo", "Grailed", "1688",
     ]
     fashion_priority = [
-        "eBay", "Vinted", "SSENSE", "ASOS", "Zalando", "Grailed",
-        "Courir", "Spartoo", "Footshop", "JD Sports", "Cdiscount",
+        "AliExpress", "67behaviour", "DHgate", "Cdiscount",
         "Rouje", "Represent", "Kith", "Laced", "End Clothing",
         "Cettire", "The Outnet", "Galeries Lafayette", "La Redoute",
         "Nike", "Adidas", "Puma", "Converse", "Veja Store",
-        "67behaviour", "AliExpress", "DHgate",
+        "eBay", "Vinted", "SSENSE", "ASOS", "Zalando", "Grailed",
+        "Courir", "Spartoo", "Footshop", "JD Sports",
         "i-Run", "Direct Running", "Alltricks", "Deporvillage",
         "21RUN", "Running Point", "MisterRunning", "Hardloop", "Ekosport", "1688",
     ]
     generic_priority = [
-        "eBay", "Vinted", "ASOS", "Zalando", "SSENSE", "Courir",
-        "Spartoo", "Footshop", "JD Sports", "Grailed",
+        "AliExpress", "67behaviour", "DHgate", "Cdiscount",
         "Nike", "Adidas", "New Balance Store", "Puma", "Converse",
         "Foot Locker", "Sneakersnstuff", "End Clothing", "Cettire",
         "The Outnet", "Laced", "Asphaltgold", "BSTN", "43einhalb",
         "Galeries Lafayette", "La Redoute",
+        "eBay", "Vinted", "ASOS", "Zalando", "SSENSE", "Courir",
+        "Spartoo", "Footshop", "JD Sports", "Grailed",
         "i-Run", "Direct Running", "Alltricks", "Deporvillage",
         "21RUN", "Running Point", "MisterRunning", "Hardloop", "Ekosport",
-        "Cdiscount", "67behaviour", "AliExpress", "DHgate", "1688",
+        "1688",
     ]
     if brand in _RUNNING_BRANDS or product_type == "chaussures":
         preferred = running_priority
@@ -750,9 +757,9 @@ _image_feature_lock = Lock()
 # de parallélisme. Les tâches sont bornées par les timeouts des connecteurs.
 _PROGRESSIVE_WORKERS = _bounded_env_int(
     "LUXE_RADAR_PROGRESSIVE_WORKERS",
-    3 if IS_RENDER_RUNTIME else 5,
+    5 if IS_RENDER_RUNTIME else 8,
     1,
-    5,
+    12,
 )
 _progressive_executor = ThreadPoolExecutor(
     max_workers=_PROGRESSIVE_WORKERS,
