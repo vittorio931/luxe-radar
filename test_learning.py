@@ -29,6 +29,7 @@ def _reset_learn_state():
     learn._learn_db_path = None
     learn._learn_schema_ready = False
     learn._last_purge_ts = 0.0
+    learn._last_aggregate_ts = 0.0
 
 
 _orig_enabled = learn.LEARN_ENABLED
@@ -139,7 +140,7 @@ def test_schema_create_table():
     conn.close()
 
 
-def test_no_learn_signals_table():
+def test_learn_signals_table():
     _reset_learn_state()
     db = Path(tempfile.mkdtemp()) / "t.sqlite3"
     conn = sqlite3.connect(str(db))
@@ -147,7 +148,7 @@ def test_no_learn_signals_table():
     learn.ensure_learn_schema(conn)
     conn.commit()
     tables = [r[0] for r in conn.execute("SELECT name FROM sqlite_master WHERE type='table'")]
-    _check("no_learn_signals_table", "learn_signals" not in tables)
+    _check("learn_signals_table", "learn_signals" in tables)
     conn.close()
 
 
@@ -1031,7 +1032,7 @@ def test_background_workers_function_exists():
 ALL_TESTS = [
     test_flag_default_disabled, test_flag_enabled_true, test_flag_enabled_1,
     test_flag_disabled_empty, test_flag_off_no_push, test_flag_off_no_start,
-    test_schema_create_table, test_no_learn_signals_table, test_schema_idempotent,
+    test_schema_create_table, test_learn_signals_table, test_schema_idempotent,
     test_event_id_unique, test_schema_columns,
     test_push_adds_to_buffer, test_push_rejects_invalid_type,
     test_push_rejects_empty_qk, test_push_rejects_long_qk,

@@ -8,7 +8,7 @@ sw = (root / 'static/sw.js').read_text(encoding='utf-8')
 req = (root / 'requirements.txt').read_text(encoding='utf-8')
 
 assert 'APP_VERSION = "3.8.1"' in app
-assert 'ASSET_VERSION = "20260822-381"' in app
+assert 'ASSET_VERSION = "20260825-382"' in app
 for source in ("Vinted","Zalando","ASOS","SSENSE","Cdiscount"):
     assert f'"{source}"' in app
 assert '"Cdiscount"' in app and '"Zalando"' in app

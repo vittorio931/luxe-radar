@@ -42,6 +42,7 @@ except ImportError:  # pragma: no cover - Linux
 import index_engine
 from connector_registry import get_available_connectors
 from marketplaces import source_health
+from marketplaces.source_scheduler import plan_sources
 
 # ---------------------------------------------------------------------------
 # Configuration (env-aware, aucune valeur inventée)
@@ -208,19 +209,19 @@ def _source_priority(name: str) -> int:
         return len(DEFAULT_PRIORITY) + 1
 
 
-def ordered_sources(available: dict | None = None) -> list:
+def ordered_sources(available: dict | None = None, query: str = "") -> list:
     """Sources disponibles ordonnées productif d'abord, cooldowns sautés."""
     available = available if available is not None else get_available_connectors()
+    if query:
+        return [item.connector for item in plan_sources(query, available)]
     ordered = []
     for name, connector in available.items():
         if source_health.registry.skip_source(name):
             continue
-        base = _source_priority(name)
-        score = source_health.registry.priority_score(name, base)
-        if score is None:
-            continue
-        ordered.append((score, name, connector))
-    ordered.sort(key=lambda triple: (triple[0], triple[2].name))
+        score = source_health.registry.priority_score(name, _source_priority(name))
+        if score is not None:
+            ordered.append((score, name, connector))
+    ordered.sort(key=lambda triple: (triple[0], triple[1].casefold()))
     return [connector for _, _, connector in ordered]
 
 
@@ -269,7 +270,7 @@ def collect_seed(query, price_max=None, *, sources: list[str] | None = None,
             else:
                 log(f"[COLLECTOR] {query} | source inconnue/désactivée : {name}")
     else:
-        connectors = ordered_sources(available)
+        connectors = ordered_sources(available, query=query)
 
     if not connectors:
         return {"error": "aucune source disponible (toutes en cooldown ?)", "sources": {}}
@@ -357,7 +358,11 @@ def _walk_source(connector, query, price_max, *, dry_run=False, path=None, log=N
 
     consecutive_empty = 0
     seen_keys: set[str] = set()
-    page = 1
+    progress = index_engine.collector_progress(query, name, path=path) if (paged and not dry_run) else {}
+    page = max(1, min(int(progress.get("next_page", 1) or 1), pages_total))
+    if progress.get("completed"):
+        page = 1
+    summary["resumed_at_page"] = page
     while True:
         page_started = perf_counter()
         try:
@@ -380,6 +385,7 @@ def _walk_source(connector, query, price_max, *, dry_run=False, path=None, log=N
                     raw=0, parsed=0, relevant=0, rejected=0, new=0, duplicates=0,
                     has_more=False, blocked=True, latency_ms=latency_ms, path=path,
                 )
+                index_engine.save_collector_progress(query, name, page, False, path=path)
             summary["error"] = failed
             summary["blocked_pages"] += 1
             summary["pages"] += 1
@@ -441,6 +447,9 @@ def _walk_source(connector, query, price_max, *, dry_run=False, path=None, log=N
                 has_more=has_more, blocked=False, latency_ms=latency_ms, path=path,
             )
             source_health.registry.record_outcome(name, parsed, relevant, network_elapsed=latency_ms / 1000.0)
+            index_engine.save_collector_progress(
+                query, name, page + 1 if has_more else 1, not has_more, path=path,
+            )
 
         summary["pages"] += 1
         summary["raw"] += parsed

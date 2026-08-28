@@ -12,14 +12,15 @@ REQUIRED = {
     "connector_type", "supports_search", "supports_price", "supports_image",
     "supports_reference", "notes",
 }
-# V3.5 : expansion fashion/retail — le catalogue active les 24 connecteurs
-# du registre (les anciennes 7 références historiques ont été élargies).
+# V3.8 : le catalogue actif reflète exactement les connecteurs disponibles.
+# Les classes désactivées/blocked restent référencées mais jamais affichées
+# comme sources actives.
 ACTIVE = {
-    "1688", "21RUN", "67behaviour", "ASOS", "AliExpress", "Alltricks",
-    "Cdiscount", "Courir", "DHgate", "Deporvillage", "Direct Running",
+    "21RUN", "67behaviour", "ASOS", "AliExpress", "Alltricks",
+    "Cdiscount", "Courir", "Deporvillage", "Direct Running",
     "Ekosport", "Footshop", "Grailed", "Hardloop", "JD Sports",
-    "MisterRunning", "Running Point", "SSENSE", "Spartoo", "Vinted",
-    "Zalando", "eBay", "i-Run",
+    "Foot Locker", "Kith", "MisterRunning", "Running Point", "SSENSE",
+    "Salomon Store", "Spartoo", "The Outnet", "Vinted", "Zalando", "eBay", "i-Run",
 }
 
 

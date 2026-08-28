@@ -10,7 +10,7 @@ css = (root / 'static' / 'app.css').read_text(encoding='utf-8')
 sites = json.loads((root / 'marketplaces' / 'sites.json').read_text(encoding='utf-8'))['sites']
 
 assert 'APP_VERSION = "3.8.1"' in app
-assert 'ASSET_VERSION = "20260822-381"' in app
+assert 'ASSET_VERSION = "20260825-382"' in app
 
 new_sources = [
     'i-Run','Direct Running','Alltricks','Deporvillage','Running Point',

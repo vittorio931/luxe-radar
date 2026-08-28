@@ -13,6 +13,7 @@ manteau, robe…), alignée sur ``radar_engine._TYPES_RECHERCHE_MULTI``.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from functools import lru_cache
 import re
 import unicodedata
 
@@ -48,25 +49,25 @@ def _contains_word(text_folded: str, word: str) -> bool:
 # ---------------------------------------------------------------------------
 
 _EXTRA_TYPE_ALIASES = {
-    "casquette": ("casquette", "casquettes", "cap", "caps", "casq"),
+    "casquette": ("casquette", "casquettes", "cap", "caps", "baseball cap", "snapback", "casq"),
     "chaussettes": ("chaussette", "chaussettes", "sock", "socks"),
-    "gilet": ("gilet", "gilets", "bodywarmer", "gilet sans manches"),
-    "maillot": ("maillot", "maillots", "jersey", "jerseys", "maillot de bain"),
-    "manteau": ("manteau", "manteaux", "overcoat", "parka", "trench"),
-    "doudoune": ("doudoune", "doudounes", "puffer", "down jacket", "duvet"),
-    "jean": ("jean", "jeans", "denim"),
-    "jogging": ("jogging", "jogging pantalon", "trackpant", "track pants", "sweatpants"),
+    "gilet": ("gilet", "gilets", "bodywarmer", "waistcoat", "sleeveless vest", "gilet sans manches"),
+    "maillot": ("maillot", "maillots", "jersey", "jerseys", "football shirt", "soccer jersey", "swimsuit", "maillot de bain"),
+    "manteau": ("manteau", "manteaux", "overcoat", "parka", "trench", "trenchcoat", "raincoat"),
+    "doudoune": ("doudoune", "doudounes", "puffer", "puffer jacket", "down jacket", "quilted jacket", "duvet"),
+    "jean": ("jean", "jeans", "denim", "denim pants", "denim trousers"),
+    "jogging": ("jogging", "jogging pantalon", "trackpant", "trackpants", "track pants", "sweatpant", "sweatpants"),
     "robe": ("robe", "robes", "dress", "dresses"),
     "jupe": ("jupe", "jupes", "skirt", "skirts"),
     "bonnet": ("bonnet", "bonnets", "beanie", "beanies", "tuque"),
-    "sac": ("sac", "sacs", "bag", "bags", "tote", "backpack", "sac a dos"),
+    "sac": ("sac", "sacs", "bag", "bags", "handbag", "handbags", "shoulder bag", "crossbody", "cross body", "tote", "clutch", "pouch", "backpack", "rucksack", "sac a dos"),
     "ceinture": ("ceinture", "ceintures", "belt", "belts"),
     "echarpe": ("echarpe", "echarpes", "scarf", "scarves", "snood"),
     "gants": ("gant", "gants", "glove", "gloves"),
     "debardeur": ("debardeur", "debardeurs", "tank top", "tanktop", "singlet"),
     "brassiere": ("brassiere", "brassieres", "bra", "sports bra", "sport bra", "soutien gorge", "soutien-gorge"),
-    "baskets": ("basket", "baskets", "sneaker", "sneakers", "trainers"),
-    "chaussures": ("chaussure", "chaussures", "shoe", "shoes", "running shoe", "running shoes"),
+    "baskets": ("basket", "baskets", "sneaker", "sneakers", "trainer", "trainers", "kicks"),
+    "chaussures": ("chaussure", "chaussures", "shoe", "shoes", "running shoe", "running shoes", "loafer", "loafers", "boot", "boots", "sandal", "sandals", "mule", "mules"),
     "tee-shirt": ("t shirt", "tshirt", "tee shirt", "tee", "t-shirts"),
 }
 
@@ -243,6 +244,7 @@ def _infer_unique_model_brand(text_folded: str):
     return next(iter(winners))
 
 
+@lru_cache(maxsize=1024)
 def parse_search_intent(query: str) -> SearchIntent:
     """Parse une requête libre en intent structurée et déterministe."""
     query = str(query or "").strip()
@@ -275,8 +277,14 @@ def parse_search_intent(query: str) -> SearchIntent:
     # marque (``Air Force 1``, ``Samba``, ``XT-6``...). ``understand_query``
     # exige volontairement une marque pour son fuzzy ; ici on ajoute seulement
     # une inférence exacte et non ambiguë depuis le catalogue de modèles.
-    if not brand and not is_reference and inferred_brand and inferred_model:
-        brand, model = inferred_brand, inferred_model
+    if not is_reference and inferred_brand and inferred_model:
+        if not brand:
+            brand, model = inferred_brand, inferred_model
+        elif not model and _fold(brand) == _fold(inferred_brand):
+            # ``understand_query`` peut reconnaître la marque sans rattacher
+            # son modèle exact. Ne pas perdre l'inférence catalogue dans ce
+            # cas (Balenciaga Track, Jacquemus Chiquito, etc.).
+            model = inferred_model
 
     # Gamme ou modèle exact ? ``Nike Trail`` = gamme (admets Pegasus Trail 5) ;
     # ``Nike P-6000`` = modèle exact (rejette Air Force 1).

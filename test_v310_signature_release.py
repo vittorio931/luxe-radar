@@ -15,7 +15,7 @@ sites = json.loads((root / "marketplaces" / "sites.json").read_text(encoding="ut
 
 # Release/cache identity.
 assert 'APP_VERSION = "3.8.1"' in app
-assert 'ASSET_VERSION = "20260822-381"' in app
+assert 'ASSET_VERSION = "20260825-382"' in app
 assert 'luxe-radar-shell-v371' in sw and '20260821-380' in sw
 assert 'gunicorn==23.0.0' in req
 

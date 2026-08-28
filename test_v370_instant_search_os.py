@@ -13,7 +13,7 @@ sw = (root / 'static' / 'sw.js').read_text(encoding='utf-8')
 quality = (root / 'marketplaces' / 'connectors' / 'quality_filters.py').read_text(encoding='utf-8')
 retail = (root / 'marketplaces' / 'connectors' / 'retail_public.py').read_text(encoding='utf-8')
 
-assert 'APP_VERSION = "3.8.1"' in app and 'ASSET_VERSION = "20260822-381"' in app
+assert 'APP_VERSION = "3.8.1"' in app and 'ASSET_VERSION = "20260825-382"' in app
 assert 'index_mode = index_hit_count > 0' in app
 assert "Le HTML n'attend plus eBay ni aucun autre marchand" in app
 assert '_progressive_source_order' in app and '_RUNNING_BRANDS' in app and '_LUXURY_FASHION_BRANDS' in app

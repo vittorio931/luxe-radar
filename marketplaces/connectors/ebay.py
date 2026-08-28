@@ -1372,9 +1372,12 @@ class EbayConnector(
     currency = "EUR"
 
     supports_pagination = True
-    expansion_page_size = 50
-    expansion_recall_cap = 150
-    max_pages = 4
+    # L'API Browse renvoie proprement jusqu'à 200 cartes par page. Dix pages
+    # bornent la collecte à 2 000 candidates réelles par requête/source, assez
+    # pour les grandes marques sans charger ce volume dans le premier rendu.
+    expansion_page_size = 200
+    expansion_recall_cap = 2000
+    max_pages = 10
     empty_pages_threshold = 3
     cooldown_seconds = 0.4
 

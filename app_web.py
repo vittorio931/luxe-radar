@@ -34,10 +34,11 @@ import search_sessions
 
 from connector_registry import get_available_connectors
 from marketplaces.connectors import get_connector
-from marketplaces.catalog import get_sites
+from marketplaces.catalog import get_definition, get_definitions, get_sites
 from radar_engine import rechercher_multi_marketplaces, _cle_unique_multi, _selection_diversifiee, _analyser_resultat_multi
 from image_similarity import MAX_IMAGE_BYTES, download_listing_image, image_feature, similarity
 from search_understanding import understand_query, suggest_queries, canonicalize_search_query
+from relevance_gate import evaluate_offer
 from marketplaces.connectors.universal import discover_catalog_wave
 from marketplaces.source_health import current_environment, registry as source_health
 
@@ -58,7 +59,7 @@ def _parse_intent(query):
 
 app = Flask(__name__)
 APP_VERSION = "3.8.1"
-ASSET_VERSION = "20260822-381"
+ASSET_VERSION = "20260829-397"
 IS_PRODUCTION = os.environ.get("LUXE_RADAR_ENV", "development").lower() == "production"
 IS_RENDER_RUNTIME = bool(
     os.environ.get("RENDER")
@@ -508,7 +509,8 @@ SEARCH_RESULT_LIMIT = _bounded_env_int(
     500,
     10000,
 )
-MAX_BATCH_SIZE = 200
+DIVERSIFIED_HEAD_SIZE = 200
+MAX_BATCH_SIZE = 500
 IMAGE_COMPARE_LIMIT = _bounded_env_int("LUXE_RADAR_IMAGE_COMPARE_LIMIT", 64, 16, 120)
 CACHE_TTL_SECONDS = (20 if IS_RENDER_RUNTIME else 30) * 60
 MAX_CACHED_SEARCHES = _bounded_env_int(
@@ -551,7 +553,7 @@ _RUNNING_BRANDS = {
     "Veja", "Converse",
 }
 _LUXURY_FASHION_BRANDS = {
-    "Stone Island", "C.P. Company", "Moncler", "Gucci", "Prada", "Dior",
+    "Stone Island", "C.P. Company", "Moncler", "Gucci", "Prada", "Dior", "Louis Vuitton",
     "Balenciaga", "Versace", "Burberry", "Off-White", "Supreme", "Stussy",
     "Palace", "Amiri", "Ralph Lauren", "Lacoste", "Carhartt", "Arc'teryx",
     "The North Face", "Patagonia", "Represent", "Kith",
@@ -562,7 +564,7 @@ _LUXURY_FASHION_BRANDS = {
 # aux connecteurs : seules ces marques (et les offres déjà indexées) alimentent
 # le résultat.
 _LUXURY_UNIVERSE_QUERIES = (
-    "Stone Island", "Moncler", "Gucci", "Balenciaga", "Prada",
+    "Stone Island", "Moncler", "Gucci", "Balenciaga", "Prada", "Louis Vuitton",
     "Dior", "Off-White", "Ralph Lauren",
 )
 
@@ -573,9 +575,11 @@ def _rotating_luxury_query() -> str:
 def _progressive_source_order(query, active_marketplaces):
     """Met les marchands les plus plausibles et productifs en tête.
 
-    V3.8.1 : sources HTTP rapides (AliExpress, 67behaviour, DHgate, Cdiscount)
-    toujours en tête pour des résultats visibles en &lt;10s. Sources lentes
-    (eBay sans API, Vinted, ASOS) repoussées.
+    V3.8.2 : eBay OAuth Production est la source rapide au rappel le plus
+    élevé et doit démarrer immédiatement. Les fallbacks navigateur lents ne
+    doivent jamais occuper les workers avant elle : sur un index froid,
+    « Nike Phenom Elite » restait sinon à 4 cartes alors qu'eBay en livrait
+    24 en environ une seconde.
 
     L'ordre combine l'intention de la requête (running/fashion/générique) et la
     santé observée pour l'environnement courant :
@@ -592,37 +596,37 @@ def _progressive_source_order(query, active_marketplaces):
         brand = None
         product_type = None
     running_priority = [
-        "AliExpress", "67behaviour", "DHgate", "Cdiscount",
+        "eBay", "Vinted", "AliExpress", "67behaviour",
         "i-Run", "Direct Running", "21RUN", "Running Point",
         "MisterRunning", "Nike", "Adidas", "New Balance Store",
         "On Store", "Salomon Store", "Puma", "Converse",
         "Foot Locker", "Sneakersnstuff",
-        "eBay", "Vinted", "ASOS", "Zalando",
+        "ASOS", "Zalando", "Cdiscount", "DHgate",
         "Hardloop", "Ekosport", "Courir", "Footshop", "JD Sports",
         "Alltricks", "Deporvillage",
         "SSENSE", "Spartoo", "Grailed", "1688",
     ]
     fashion_priority = [
-        "AliExpress", "67behaviour", "DHgate", "Cdiscount",
+        "eBay", "Vinted", "SSENSE", "Grailed", "ASOS", "Zalando",
+        "AliExpress", "67behaviour",
         "Rouje", "Represent", "Kith", "Laced", "End Clothing",
         "Cettire", "The Outnet", "Galeries Lafayette", "La Redoute",
         "Nike", "Adidas", "Puma", "Converse", "Veja Store",
-        "eBay", "Vinted", "SSENSE", "ASOS", "Zalando", "Grailed",
-        "Courir", "Spartoo", "Footshop", "JD Sports",
+        "Courir", "Spartoo", "Footshop", "JD Sports", "Cdiscount", "DHgate",
         "i-Run", "Direct Running", "Alltricks", "Deporvillage",
         "21RUN", "Running Point", "MisterRunning", "Hardloop", "Ekosport", "1688",
     ]
     generic_priority = [
-        "AliExpress", "67behaviour", "DHgate", "Cdiscount",
+        "eBay", "Vinted", "AliExpress", "67behaviour", "SSENSE",
         "Nike", "Adidas", "New Balance Store", "Puma", "Converse",
         "Foot Locker", "Sneakersnstuff", "End Clothing", "Cettire",
         "The Outnet", "Laced", "Asphaltgold", "BSTN", "43einhalb",
         "Galeries Lafayette", "La Redoute",
-        "eBay", "Vinted", "ASOS", "Zalando", "SSENSE", "Courir",
+        "ASOS", "Zalando", "Courir",
         "Spartoo", "Footshop", "JD Sports", "Grailed",
         "i-Run", "Direct Running", "Alltricks", "Deporvillage",
         "21RUN", "Running Point", "MisterRunning", "Hardloop", "Ekosport",
-        "1688",
+        "Cdiscount", "DHgate", "1688",
     ]
     if brand in _RUNNING_BRANDS or product_type == "chaussures":
         preferred = running_priority
@@ -732,6 +736,22 @@ def collector_status():
         return jsonify(_collector.status())
     except Exception as exc:  # pragma: no cover - défensif
         return jsonify({"enabled": collector.COLLECTOR_ENABLED, "error": str(exc)[:200]})
+
+
+@app.get("/api/system/status")
+def system_status():
+    """Operational counters only; no filesystem path or user-level data."""
+    index_state = index_engine.stats()
+    index_state.pop("db_path", None)
+    try:
+        collector_state = _collector.status()
+    except Exception as exc:  # pragma: no cover
+        collector_state = {"error": str(exc)[:160]}
+    return jsonify({
+        "index": index_state,
+        "collector": collector_state,
+        "learning": learn.learning_status(),
+    })
 
 
 @app.get("/sw.js")
@@ -859,6 +879,18 @@ def _clean_cache(now=None):
 # toutes les 5 minutes, même si _clean_cache est appelé très souvent).
 _session_disk_cleanup_next = 0.0
 
+# La sauvegarde d'un token peut contenir plusieurs milliers d'offres. Elle ne
+# doit jamais retarder le premier HTML : SQLite peut attendre son busy_timeout
+# pendant qu'un autre worker termine déjà une sauvegarde. Un writer dédié garde
+# l'ordre des écritures et ne conserve que le snapshot le plus récent par token.
+_session_persist_executor = ThreadPoolExecutor(
+    max_workers=1, thread_name_prefix="search-session-writer"
+)
+_session_persist_lock = Lock()
+_session_persist_latest = {}
+_session_persist_scheduled = set()
+_SESSION_ASYNC_RESULT_THRESHOLD = 200
+
 
 def _clean_sessions_disk(now=None):
     global _session_disk_cleanup_next
@@ -906,29 +938,59 @@ def _persistable_state(entry):
     }
 
 
+def _search_session_payload(entry, token, owner):
+    """Snapshot autonome : le writer ne lit jamais l'entrée RAM mutable."""
+    return {
+        "token": token,
+        "owner": owner,
+        "search_request": str(entry.get("search_query") or ""),
+        "search_price_raw": str(entry.get("search_price") or "")
+        if entry.get("search_price") not in (None, "") else "",
+        "selected_platform": str(entry.get("selected_platform") or "Toutes"),
+        "reference": str(entry.get("reference") or ""),
+        "reference_stricte": bool(entry.get("reference_stricte")),
+        "universe": str(entry.get("universe") or ""),
+        "request_signature": str(entry.get("search_signature") or ""),
+        "state": _persistable_state(entry),
+    }
+
+
+def _drain_search_session_persist(token):
+    """Écrit le dernier snapshot disponible, en regroupant les intermédiaires."""
+    while True:
+        with _session_persist_lock:
+            payload = _session_persist_latest.pop(token, None)
+            if payload is None:
+                _session_persist_scheduled.discard(token)
+                return
+        try:
+            search_sessions.save_search_session(**payload)
+            _clean_sessions_disk()
+        except Exception:
+            app.logger.warning("Session de recherche non persistée: %s", token, exc_info=True)
+
+
 def _persist_search_session(entry, token, owner):
-    """Upsert SQLite, hors chemin critique : un échec ne casse jamais la réponse."""
+    """Programme l'upsert SQLite sans bloquer le premier rendu ni le scroll."""
     if not token:
         return
     try:
-        search_sessions.save_search_session(
-            token=token,
-            owner=owner,
-            search_request=str(entry.get("search_query") or ""),
-            search_price_raw=str(entry.get("search_price") or "")
-            if entry.get("search_price") not in (None, "")
-            else "",
-            selected_platform=str(entry.get("selected_platform") or "Toutes"),
-            reference=str(entry.get("reference") or ""),
-            reference_stricte=bool(entry.get("reference_stricte")),
-            universe=str(entry.get("universe") or ""),
-            state=_persistable_state(entry),
-        )
-        # Nettoyage SQLite hors de _cache_lock : une contention disque ne doit
-        # jamais bloquer /status ni /api/results pendant le scroll.
-        _clean_sessions_disk()
+        payload = _search_session_payload(entry, token, owner)
+        # Les petits états coûtent quelques millisecondes et restent synchrones:
+        # cela garantit immédiatement le token en cas de restart. Seuls les
+        # gros catalogues, responsables du délai visible, passent au writer.
+        if len(payload["state"].get("results") or []) <= _SESSION_ASYNC_RESULT_THRESHOLD:
+            search_sessions.save_search_session(**payload)
+            _clean_sessions_disk()
+            return
+        with _session_persist_lock:
+            _session_persist_latest[token] = payload
+            if token in _session_persist_scheduled:
+                return
+            _session_persist_scheduled.add(token)
+        _session_persist_executor.submit(_drain_search_session_persist, token)
     except Exception:
-        app.logger.warning("Session de recherche non persistée: %s", token, exc_info=True)
+        app.logger.warning("Session de recherche non planifiée: %s", token, exc_info=True)
 
 
 def _apply_restored_state(token, restored):
@@ -1049,6 +1111,7 @@ def _restore_search_session(token, owner, active_marketplaces):
             reference=reference,
             reference_stricte=reference_stricte,
             universe=universe,
+            search_signature=str(record.get("request_signature") or ""),
             reuse_token=token,
         )
         _apply_restored_state(token, state)
@@ -1119,7 +1182,7 @@ def _cache_results(
     search_query=None, search_price=None, index_mode=False,
     index_hit_count=0, index_total=0, index_age_seconds=None,
     selected_platform=None, reference=None, reference_stricte=False,
-    universe="", reuse_token=None,
+    universe="", search_signature="", reuse_token=None,
 ):
     token = reuse_token or uuid4().hex
     pending_sources = list(dict.fromkeys(str(source) for source in (pending_sources or []) if str(source)))
@@ -1167,6 +1230,7 @@ def _cache_results(
             "reference": str(reference or ""),
             "reference_stricte": bool(reference_stricte),
             "universe": str(universe or ""),
+            "search_signature": str(search_signature or ""),
             # Infinite-scroll V3.7 MAX RECALL: every source that can expose a
             # real page gets its own cursor. Non-page connectors use a bounded
             # recall widening pass (initial cap -> 100) instead of fabricating
@@ -1442,21 +1506,26 @@ def _finish_progressive_source(token, query, price, source, reference, strict, o
         # Playwright partagent en plus un sémaphore afin de ne jamais lancer
         # deux Chromium simultanément sur le petit service Render.
         def _search_source():
-            # V2.9.2 : ne pas analyser 100+ cartes par source au premier passage.
-            # Le scroll infini demandera les pages suivantes au besoin.
+            # V3.8.2 : premier passage à rappel renforcé sur les sources qui
+            # paginent proprement. Le filtre de catégorie final empêche que ce
+            # volume supplémentaire se transforme en chaussures/hauts hors sujet.
             source_caps = {
-                "Zalando": 30,
+                "eBay": 100,
+                "Zalando": 60,
                 "SSENSE": 120,
-                "ASOS": 60,
+                "ASOS": 80,
                 "AliExpress": 60,
                 "DHgate": 50,
                 "Cdiscount": 40,
-                "67behaviour": 30,
+                "67behaviour": 60,
                 "1688": 30,
-                "Grailed": 36,
+                "Grailed": 60,
                 "Vinted": 30,
             }
-            source_limit = min(source_caps.get(source, 50), SEARCH_RESULT_LIMIT)
+            # Tous les autres connecteurs actifs disposent du même budget de
+            # rappel renforcé. Leur connecteur reste libre de s'arrêter plus tôt
+            # si le site n'expose pas davantage de cartes propres.
+            source_limit = min(source_caps.get(source, 60), SEARCH_RESULT_LIMIT)
             return rechercher_multi_marketplaces(
                 marque=query,
                 prix_max=price,
@@ -1604,6 +1673,48 @@ def _sorted_results(results, sort="relevance", marketplace="Toutes", price_min=N
     return sorted(filtered, key=keys.get(sort, keys["relevance"]))
 
 
+def _marketplace_coverage_head(results, head_size=50, per_source=5, max_sources=8):
+    """Expose plusieurs sources en tête sans supprimer ni dupliquer d'offre.
+
+    Le classement à l'intérieur de chaque marketplace reste intact. Seule une
+    petite tête est entrelacée ; le reste conserve son ordre original pour que
+    le scroll finisse toujours par parcourir le catalogue complet.
+    """
+    items = list(results or [])
+    head_size = max(1, min(int(head_size or 50), len(items))) if items else 0
+    if head_size <= 1:
+        return items
+    source_order = []
+    buckets = {}
+    for index, item in enumerate(items):
+        source = str(item.get("marketplace") or "Inconnu")
+        if source not in buckets:
+            if len(source_order) >= max_sources:
+                continue
+            source_order.append(source)
+            buckets[source] = []
+        buckets[source].append((index, item))
+    if len(source_order) <= 1:
+        return items
+
+    chosen_indexes = []
+    for round_index in range(max(1, int(per_source or 1))):
+        for source in source_order:
+            bucket = buckets[source]
+            if round_index < len(bucket) and len(chosen_indexes) < head_size:
+                chosen_indexes.append(bucket[round_index][0])
+    chosen = set(chosen_indexes)
+    for index in range(len(items)):
+        if len(chosen_indexes) >= head_size:
+            break
+        if index not in chosen:
+            chosen_indexes.append(index)
+            chosen.add(index)
+    return [items[index] for index in chosen_indexes] + [
+        item for index, item in enumerate(items) if index not in chosen
+    ]
+
+
 def _cached_image_feature(url):
     """Download once per URL per session; embedded features are bounded in memory."""
     with _image_feature_lock:
@@ -1677,13 +1788,9 @@ def _index_spillover(entry, token_results, offset, limit, *, sort="relevance", m
         query = str(entry.get("search_query") or "").strip()
         if not query or not index_engine.index_enabled():
             return None
-        # ``index_total`` est un snapshot pris au démarrage de la recherche.
-        # Sur un cold start il peut valoir 0, puis l'index async reçoit de vraies
-        # offres quelques secondes plus tard. Quand le token est encore vide, ne
-        # jamais utiliser ce vieux 0 pour masquer ces offres fraîchement indexées.
-        cached_index_total = int(entry.get("index_total") or 0)
-        if token_results and cached_index_total <= len(token_results or []):
-            return None
+        # ``index_total`` n'est qu'un snapshot de démarrage. Toujours relire
+        # l'index à l'épuisement du token : le collecteur peut avoir ajouté des
+        # centaines d'offres réelles entre-temps.
         index_offset = max(0, offset - len(token_results or []))
         indexed = index_engine.search(
             query,
@@ -1738,10 +1845,64 @@ def _result_page(token, offset, limit=RESULT_BATCH_SIZE, sort="relevance", marke
             "search_query": entry.get("search_query"),
             "search_price": entry.get("search_price"),
             "index_total": entry.get("index_total"),
+            "selected_platform": entry.get("selected_platform"),
         }
         raw_results = [dict(item) for item in entry.get("results") or []]
 
+    # Le filtre demandé à l'API ne peut jamais élargir le périmètre avec lequel
+    # le token a été créé. Exemple : un token Grailed + marketplace=Toutes
+    # signifie « toutes les offres de ce token », pas « puiser eBay dans
+    # l'index global » lorsque le scroll atteint la fin.
+    token_marketplace = str(entry_snapshot.get("selected_platform") or "Toutes")
+    if token_marketplace != "Toutes":
+        if marketplace not in {"Toutes", token_marketplace}:
+            return {
+                "results": [], "next_offset": offset, "has_more": False,
+                "total": 0, "page": (offset // max(1, limit)) + 1,
+                "total_pages": 1, "per_page": max(1, limit),
+            }
+        marketplace = token_marketplace
+
+    # Défense finale avant exposition API. Les résultats peuvent provenir d'un
+    # ancien snapshot de session ou avoir été fusionnés par une vague terminée
+    # après le premier rendu. Leur niveau_identite historique correspond alors
+    # parfois à une requête plus large (ex. Nike Trail) et ne suffit pas pour la
+    # requête précise actuelle (Nike Trail pantalon). Réévaluer le TITRE contre
+    # la requête du token empêche définitivement chaussures/hauts de sortir ici.
+    query = str(entry_snapshot.get("search_query") or "").strip()
+    final_intent = _parse_intent(query) if query else None
+    # Cette défense supplémentaire est nécessaire uniquement lorsque
+    # l'utilisateur a explicitement demandé une famille produit. Les requêtes
+    # marque/modèle restent sur le pipeline normal afin de préserver leur rappel.
+    if final_intent is not None and getattr(final_intent, "product_type", None):
+        filtered_results = []
+        for item in raw_results:
+            try:
+                # Réutiliser l'intention déjà parsée. Passer ``query`` ici
+                # relançait la détection floue marque/modèle pour CHAQUE carte
+                # (26 s pour 93 offres sur une machine locale).
+                if evaluate_offer(final_intent, item).accepted:
+                    filtered_results.append(item)
+            except Exception:
+                # Fail closed sur une recherche contrainte : une erreur de gate
+                # ne doit jamais réintroduire une catégorie incompatible.
+                continue
+        raw_results = filtered_results
+
     results = _sorted_results(raw_results, sort=sort, marketplace=marketplace, price_min=price_min, price_max=price_max, price_exact=price_exact, price_tolerance=price_tolerance, exclude=exclude, risk=risk, identity=identity)
+    if sort == "relevance" and marketplace == "Toutes" and len(results) > 1:
+        # Le premier écran doit représenter le marché, pas uniquement la source
+        # la plus abondante. La diversification historique est quadratique :
+        # l'appliquer à 1 000+ offres bloquait le premier rendu alors que seules
+        # 50 cartes sont visibles. Une tête FIXE garde aussi la pagination stable.
+        head_size = min(len(results), DIVERSIFIED_HEAD_SIZE)
+        diversified_head, _counts = _selection_diversifiee(
+            results[:head_size], head_size, diversifie=True,
+        )
+        results = [*diversified_head, *results[head_size:]]
+        results = _marketplace_coverage_head(
+            results, head_size=min(INITIAL_RESULTS, len(results)),
+        )
     per_page = max(1, int(limit))
     page = [_public_result(item) for item in results[offset:offset + limit]]
     next_offset = offset + len(page)
@@ -1843,6 +2004,12 @@ def sources_health():
         except Exception:
             health = {"ok": False}
         profile[name] = {
+            "definition": ({
+                "id": definition.id, "domain": definition.domain,
+                "country": definition.country, "categories": definition.categories,
+                "tier": definition.tier, "method": definition.method,
+                "max_concurrency": definition.max_concurrency,
+            } if (definition := get_definition(name)) else None),
             "supports_pagination": bool(getattr(connector, "supports_pagination", False)),
             "expansion_page_size": int(getattr(connector, "expansion_page_size", 50)),
             "expansion_recall_cap": int(getattr(connector, "expansion_recall_cap", 100)),
@@ -1863,6 +2030,10 @@ def sources_health():
         "queue_p95_ms": source_health.queue_p95(),
         "network_p50_ms": source_health.network_p50(),
         "network_p95_ms": source_health.network_p95(),
+        "runtime": source_health.summary(active_marketplaces),
+        "registered": len(get_definitions()),
+        "enabled": len(active_marketplaces),
+        "disabled": len(get_definitions(enabled=False)),
     }
     _sources_health_cache.update({"at": time.time(), "profile": profile})
     return jsonify({"sources": profile})
@@ -2041,7 +2212,7 @@ def _expand_in_background(token, owner, target, query, price, page_state,
         else:
             next_page = int(page_state.get(target, 1)) + 1
             page_limits = {
-                "eBay": 100, "Zalando": 60, "Vinted": 80,
+                "eBay": 200, "Zalando": 60, "Vinted": 80,
                 "i-Run": 100, "Direct Running": 100, "Alltricks": 100,
                 "Deporvillage": 100, "Running Point": 100, "Hardloop": 100,
                 "Ekosport": 100, "Courir": 100, "21RUN": 100,
@@ -2380,7 +2551,11 @@ def _search_signature(recherche, prix_saisi, selected_platform, reference_saisie
     """Empreinte stable des entrées de recherche pour réutiliser le token de
     session (évite de re-frapper les marketplaces quand on change de page)."""
     payload = "|".join([
-        str(recherche or "").strip(),
+        "search-v3",
+        # Signer la requête comprise : « Louiss Vuitton » et « Louis Vuitton »
+        # partagent le même cache, tandis qu'un ancien token zéro créé avant la
+        # correction orthographique ne masque pas le nouveau résultat canonique.
+        _canonicalize_search_query(str(recherche or "").strip()),
         str(prix_saisi or "").strip(),
         str(selected_platform or "Toutes"),
         str(reference_saisie or "").strip(),
@@ -2389,7 +2564,28 @@ def _search_signature(recherche, prix_saisi, selected_platform, reference_saisie
     return hashlib.sha256(payload.encode("utf-8")).hexdigest()
 
 
-def _run_radar_search(recherche, prix_saisi, selected_platform, reference_saisie, reference_stricte, initial_lots, active_marketplaces, universe=""):
+def _reusable_search(signature, owner, active_marketplaces):
+    """Retrouve un token RAM ou SQLite pour cette recherche exacte."""
+    token = None
+    if session.get("lr_search_signature") == signature:
+        token = str(session.get("lr_search_token") or "")
+    if not token:
+        try:
+            record = search_sessions.find_search_session(owner, signature)
+            token = str((record or {}).get("token") or "")
+        except Exception:
+            app.logger.warning("Recherche persistée introuvable", exc_info=True)
+    if not token:
+        return None, None
+    entry = _ensure_search_session(token, owner, active_marketplaces)
+    if entry is None:
+        return None, None
+    session["lr_search_token"] = token
+    session["lr_search_signature"] = signature
+    return token, entry
+
+
+def _run_radar_search(recherche, prix_saisi, selected_platform, reference_saisie, reference_stricte, initial_lots, active_marketplaces, universe="", search_signature=""):
     """Exécute une recherche radar réelle (index instantané + workers progressifs).
 
     Réutilisé par le POST / (formulaire) et le GET /search (URL paginée).
@@ -2547,6 +2743,7 @@ def _run_radar_search(recherche, prix_saisi, selected_platform, reference_saisie
                     reference=reference_saisie,
                     reference_stricte=state["reference_stricte"],
                     universe=universe,
+                    search_signature=search_signature,
                 )
                 _submit_progressive(state["search_token"], connector_query, prix)
                 _finalize_first_page()
@@ -2592,6 +2789,7 @@ def _run_radar_search(recherche, prix_saisi, selected_platform, reference_saisie
                     reference=reference_saisie,
                     reference_stricte=state["reference_stricte"],
                     universe=universe,
+                    search_signature=search_signature,
                 )
                 _submit_progressive(state["search_token"], connector_query, prix)
                 _finalize_first_page()
@@ -2652,15 +2850,46 @@ def accueil():
             initial_lots = max(1, min(int(lots_raw), MAX_BATCH_SIZE)) if lots_raw else default_initial_lots
         except (TypeError, ValueError):
             initial_lots = default_initial_lots
-        state.update(_run_radar_search(
-            recherche, prix_saisi, selected_platform, reference_saisie,
-            reference_stricte, initial_lots, active_marketplaces, universe=universe,
-        ))
+        signature = _search_signature(
+            recherche, prix_saisi, selected_platform, reference_saisie, reference_stricte
+        )
+        cached_token, cached_entry = (
+            _reusable_search(signature, session.get("csrf_token"), active_marketplaces)
+            if selected_platform in {"Toutes", *active_marketplaces}
+            else (None, None)
+        )
+        if cached_token and cached_entry is not None:
+            first_page = _result_page(
+                cached_token, 0, limit=initial_lots, identity="all",
+                owner=session.get("csrf_token"),
+            )
+            state.update({
+                "recherche": recherche,
+                "prix_saisi": prix_saisi,
+                "selected_platform": selected_platform,
+                "reference_saisie": reference_saisie,
+                "reference_stricte": reference_stricte,
+                "initial_lots": initial_lots,
+                "search_token": cached_token,
+                "annonces": first_page["results"] if first_page else [],
+                "total_results": first_page["total"] if first_page else 0,
+                "search_pending": bool(cached_entry.get("pending")),
+                "search_generation": int(cached_entry.get("generation", 0)),
+                "index_mode": bool(cached_entry.get("index_mode")),
+                "index_hit_count": int(cached_entry.get("index_hit_count", 0)),
+                "index_age_seconds": cached_entry.get("index_age_seconds"),
+                "page": 1,
+                "total_pages": first_page["total_pages"] if first_page else 1,
+            })
+        else:
+            state.update(_run_radar_search(
+                recherche, prix_saisi, selected_platform, reference_saisie,
+                reference_stricte, initial_lots, active_marketplaces, universe=universe,
+                search_signature=signature,
+            ))
         if state["search_token"] and not state["erreur"]:
             session["lr_search_token"] = state["search_token"]
-            session["lr_search_signature"] = _search_signature(
-                recherche, prix_saisi, state["selected_platform"], reference_saisie, reference_stricte
-            )
+            session["lr_search_signature"] = signature
 
     return _render_search_page(state, catalog_sites, active_marketplaces)
 
@@ -2703,7 +2932,7 @@ def _render_search_page(state, catalog_sites, active_marketplaces):
     )
 
 
-@app.get("/search")
+@app.route("/search", methods=["GET", "POST"])
 def search_share_page():
     """Rendu serveur d'une page de résultats partageable.
 
@@ -2712,6 +2941,13 @@ def search_share_page():
     (aucune nouvelle frappe des marketplaces). Sinon une recherche réelle est
     relancée puis la page demandée est affichée.
     """
+    # Compatibilité avec les pages déjà ouvertes/cachées avant V3.8.2 : leur
+    # formulaire sans action explicite postait relativement sur /search et
+    # recevait 405. Traiter ce POST comme le formulaire principal garantit
+    # qu'une deuxième recherche démarre même avant un Ctrl+F5 utilisateur.
+    if request.method == "POST":
+        return accueil()
+
     catalog_sites, active_marketplaces = _app_metadata()
     recherche = request.args.get("q", "").strip()[:120]
     prix_saisi = request.args.get("price", "").strip()[:30]
@@ -2754,15 +2990,7 @@ def search_share_page():
 
     signature = _search_signature(recherche, prix_saisi, selected_platform, reference_saisie, reference_stricte)
     owner = session.get("csrf_token")
-    cached_token = None
-    cached_entry = None
-    if session.get("lr_search_signature") == signature and session.get("lr_search_token"):
-        restored_entry = _ensure_search_session(
-            str(session.get("lr_search_token")), owner, active_marketplaces
-        )
-        if restored_entry is not None:
-            cached_token = str(session.get("lr_search_token"))
-            cached_entry = restored_entry
+    cached_token, cached_entry = _reusable_search(signature, owner, active_marketplaces)
 
     if cached_token and cached_entry is not None:
         first_page = _result_page(cached_token, offset, limit=SEARCH_PAGE_SIZE, identity="confirmed", owner=owner)
@@ -2776,6 +3004,7 @@ def search_share_page():
         initial = _run_radar_search(
             recherche, prix_saisi, selected_platform, reference_saisie,
             reference_stricte, SEARCH_PAGE_SIZE, active_marketplaces,
+            search_signature=signature,
         )
         state.update({key: value for key, value in initial.items() if key in state})
         if state["search_token"] and not state["erreur"]:

@@ -6,7 +6,7 @@ js=(root/'static/app.js').read_text(encoding='utf-8')
 css=(root/'static/app.css').read_text(encoding='utf-8')
 billing=(root/'billing_stripe.py').read_text(encoding='utf-8')
 sw=(root/'static/sw.js').read_text(encoding='utf-8')
-assert 'APP_VERSION = "3.8.1"' in app and 'ASSET_VERSION = "20260822-381"' in app
+assert 'APP_VERSION = "3.8.1"' in app and 'ASSET_VERSION = "20260825-382"' in app
 assert '"name": "Premium", "monthly": 4.99' in app
 assert '"name": "Pro", "monthly": 12.99' in app
 assert 'id="auto-radar-form"' in html and 'id="auto-radar-list"' in html

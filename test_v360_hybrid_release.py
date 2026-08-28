@@ -8,7 +8,7 @@ sw = (root / 'static' / 'sw.js').read_text(encoding='utf-8')
 index_code = (root / 'index_engine.py').read_text(encoding='utf-8')
 warm = (root / 'warm_index.py').read_text(encoding='utf-8')
 
-assert 'APP_VERSION = "3.8.1"' in app and 'ASSET_VERSION = "20260822-381"' in app
+assert 'APP_VERSION = "3.8.1"' in app and 'ASSET_VERSION = "20260825-382"' in app
 assert 'index_engine.search(' in app
 assert 'index_mode = index_hit_count > 0' in app
 assert "Le HTML n'attend plus eBay ni aucun autre marchand" in app

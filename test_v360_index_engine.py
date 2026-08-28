@@ -7,9 +7,10 @@ import index_engine
 
 def offer(i, query='Stone Island', price=None, level='fort'):
     price = float(price if price is not None else 100 + (i % 400))
+    product = 'chaussures' if query == 'On Cloud 5' else 'veste'
     return {
         'marketplace': 'TestShop' if i % 2 else 'eBay',
-        'titre': f'{query} veste modèle {i}',
+        'titre': f'{query} {product} modèle {i}',
         'prix': price,
         'prix_total': price,
         'devise': 'EUR',

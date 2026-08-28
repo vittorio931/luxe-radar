@@ -70,6 +70,13 @@ with tempfile.TemporaryDirectory() as tmp:
         ('Samba', 'adidas Samba Hoodie', False),
         ('XT-6', 'Salomon XT-6 Jacket', False),
         ('P-6000', 'Nike P-6000 Socks', False),
+        # Recherche famille : ces noms commerciaux décrivent bien des
+        # pantalons Nike trail même lorsque le titre omet le mot « Trail ».
+        ('pantalon Nike Trail', 'Nike ACG Dawn Range Dri-FIT Pants', True),
+        ('pantalon Nike Trail', 'Nike Phenom Elite Running Pants', True),
+        ('pantalon Nike Trail', 'Nike Storm-FIT ACG trousers', True),
+        ('pantalon Nike Trail', 'Nike ACG hoodie', False),
+        ('pantalon Nike Trail', 'Nike Pegasus Trail shoes', False),
     ]
     for query, titre, want in cases:
         got = evaluate_offer(query, offer(titre, query)).accepted
@@ -122,6 +129,24 @@ with tempfile.TemporaryDirectory() as tmp:
     db3 = base / 'fn.sqlite3'
     _upsert(db3, [('Nike Trail', [offer('Nike ReactX Pegasus Trail 5', 'Nike Trail', i=0, price=140.0)])])
     assert index_engine.search('Nike Trail', path=db3).total == 1
+
+    # Le retrieval sémantique doit chercher au-delà du mot littéral « trail »
+    # dans le catalogue, puis conserver uniquement la bonne famille + catégorie.
+    semantic = [
+        offer('Nike ACG Dawn Range Dri-FIT Pants', 'Nike ACG', i=10),
+        offer('Nike Phenom Elite Running Pants', 'Nike Phenom Elite', i=11),
+        offer('Nike ACG hoodie', 'Nike ACG', i=12),
+        offer('Nike Pegasus Trail shoes', 'Nike Trail', i=13),
+    ]
+    _upsert(db3, [('Nike ACG', semantic[:1] + semantic[2:3]),
+                  ('Nike Phenom Elite', semantic[1:2]),
+                  ('Nike Trail', semantic[3:])])
+    semantic_results = index_engine.search('pantalon Nike Trail', path=db3, limit=500).results
+    semantic_titles = {str(item.get('titre') or '') for item in semantic_results}
+    assert 'Nike ACG Dawn Range Dri-FIT Pants' in semantic_titles
+    assert 'Nike Phenom Elite Running Pants' in semantic_titles
+    assert 'Nike ACG hoodie' not in semantic_titles
+    assert 'Nike Pegasus Trail shoes' not in semantic_titles
 
     # --- RÃ©fÃ©rence produit : pas de rejet abusif --------------------------------
     db4 = base / 'ref.sqlite3'
@@ -188,6 +213,17 @@ assert build_query_profile("Trail").model is None
 assert build_query_profile("polo").brand is None
 assert build_query_profile("DM4652-040").brand is None
 assert build_query_profile("DM4652-040").model is None
+
+# Une marque non encore cataloguée reste recherchable par preuve textuelle
+# exacte, sans laisser passer une marque concurrente.
+for raw, good_title in (
+    ("Loewe", "Sac Loewe Puzzle cuir"),
+    ("Goyard", "Sac Goyard Saint Louis PM"),
+    ("Brunello Cucinelli", "Pull Brunello Cucinelli cachemire"),
+    ("Loewe pantalon", "Pantalon Loewe homme"),
+):
+    assert recognize_product(raw, good_title, marketplace="eBay").accepted
+assert not recognize_product("Loewe", "Sac Gucci Marmont", marketplace="eBay").accepted
 
 print('OK - V3.7.5 INTENT + PERTINENCE: gate 18 cas + modÃ¨les sans marque cohÃ©rents index/live, rÃ©fÃ©rences et dÃ©terminisme validÃ©s.')
 

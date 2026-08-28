@@ -153,6 +153,11 @@ NON_EXCLUSIVE_LINE_MODELS = {
     "trail", "miler", "dri-fit adv", "dri fit adv",
 }
 
+NIKE_TRAIL_PANTS_FAMILY = (
+    "trail", "trail running", "acg", "all conditions gear", "dawn range",
+    "phenom elite", "trail repel", "storm fit", "storm-fit",
+)
+
 IMPORTANT_DESCRIPTORS = {
     "trail", "running", "run", "hybrid", "miler", "tech", "fleece", "goretex", "gore", "tex",
     "waterproof", "reflective", "windrunner", "division", "pro", "elite", "performance",
@@ -612,6 +617,13 @@ def recognize(title, query, marketplace=None, extra_text=""):
     # Model / line evidence.
     if profile.model:
         model_hit = any(_phrase_or_close_present(combined, alias) for alias in profile.model_aliases)
+        if (
+            not model_hit
+            and profile.brand == "Nike"
+            and normalize(profile.model) == "trail"
+            and profile.type_name == "pantalon"
+        ):
+            model_hit = any(_phrase_or_close_present(combined, alias) for alias in NIKE_TRAIL_PANTS_FAMILY)
         if model_hit:
             score += 24
             reasons.append(f"modèle/ligne {profile.model} détecté")
@@ -680,6 +692,22 @@ def recognize(title, query, marketplace=None, extra_text=""):
             reasons.append("descripteurs : " + ", ".join(matched[:4]))
         if missing:
             reasons.append("descripteurs absents : " + ", ".join(missing[:4]))
+
+        # Marque absente du catalogue interne : une requête courte dont tous
+        # les termes distinctifs sont réellement visibles dans l'annonce reste
+        # une preuve d'identité forte. Cela rend le moteur universel pour
+        # Loewe, Goyard, Brunello Cucinelli, etc., sans accepter un titre qui ne
+        # contient pas les mots demandés et sans désactiver les conflits de
+        # type/modèle/marque connus ci-dessous.
+        if (
+            not profile.brand
+            and not profile.model
+            and len(profile.descriptors) <= 5
+            and matched
+            and not missing
+        ):
+            score += 30
+            reasons.append("requête exacte présente dans l'annonce")
 
     # Known collision: Trail Blazers != Nike Trail/running.
     if "trail" in profile.descriptors or has_phrase(profile.normalized, "trail"):

@@ -271,7 +271,7 @@ def _looks_blocked(text):
 class Ali1688Connector(MarketplaceConnector):
     name = "1688"
     display_name = "1688"
-    enabled = True
+    enabled = False  # accès public propre non vérifié ; ne pas afficher actif
     currency = "CNY"
 
     supports_pagination = False

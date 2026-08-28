@@ -4983,8 +4983,8 @@
       "notes": "Connecteur dédié expérimental sur la recherche web publique s.1688.com. Variantes chinoises pour types de produits, conversion CNY->EUR, arrêt propre si vérification/connexion. Aucun contournement de contrôle d’accès.",
       "base_url": "https://www.1688.com",
       "domain": "1688.com",
-      "enabled": true,
-      "status": "active",
+      "enabled": false,
+      "status": "off",
       "connector_type": "dedicated",
       "supports_search": true,
       "supports_price": true,
@@ -5168,8 +5168,8 @@
       "category": "Marketplaces / grossistes",
       "country": "CN",
       "currency": "EUR",
-      "enabled": true,
-      "status": "active",
+      "enabled": false,
+      "status": "off",
       "connector_type": "dedicated",
       "supports_search": true,
       "supports_price": true,
@@ -34544,8 +34544,8 @@
       "display_name": "Nike",
       "base_url": "https://www.nike.fr",
       "category": "Marques directes",
-      "status": "active",
-      "enabled": true,
+      "status": "off",
+      "enabled": false,
       "connector_type": "dedicated",
       "currency": "EUR",
       "country": "FR",
@@ -34561,15 +34561,20 @@
       "supports_price": true,
       "supports_image": true,
       "supports_reference": false,
-      "notes": "Connecteur dédié ajouté automatiquement."
+      "notes": "Connecteur dédié ajouté automatiquement.",
+      "verification": {
+        "source": "connector_registry",
+        "status": "disabled",
+        "checked_at": "2026-08-25"
+      }
     },
     {
       "name": "Adidas",
       "display_name": "Adidas",
       "base_url": "https://www.adidas.fr",
       "category": "Marques directes",
-      "status": "active",
-      "enabled": true,
+      "status": "off",
+      "enabled": false,
       "connector_type": "dedicated",
       "currency": "EUR",
       "country": "FR",
@@ -34585,15 +34590,20 @@
       "supports_price": true,
       "supports_image": true,
       "supports_reference": false,
-      "notes": "Connecteur dédié ajouté automatiquement."
+      "notes": "Connecteur dédié ajouté automatiquement.",
+      "verification": {
+        "source": "connector_registry",
+        "status": "disabled",
+        "checked_at": "2026-08-25"
+      }
     },
     {
       "name": "New Balance Store",
       "display_name": "New Balance Store",
       "base_url": "https://www.newbalance.fr",
       "category": "Marques directes",
-      "status": "active",
-      "enabled": true,
+      "status": "off",
+      "enabled": false,
       "connector_type": "dedicated",
       "currency": "EUR",
       "country": "FR",
@@ -34609,15 +34619,20 @@
       "supports_price": true,
       "supports_image": true,
       "supports_reference": false,
-      "notes": "Connecteur dédié ajouté automatiquement."
+      "notes": "Connecteur dédié ajouté automatiquement.",
+      "verification": {
+        "source": "connector_registry",
+        "status": "disabled",
+        "checked_at": "2026-08-25"
+      }
     },
     {
       "name": "On Store",
       "display_name": "On Store",
       "base_url": "https://www.on-running.com",
       "category": "Marques directes",
-      "status": "active",
-      "enabled": true,
+      "status": "off",
+      "enabled": false,
       "connector_type": "dedicated",
       "currency": "EUR",
       "country": "FR",
@@ -34633,7 +34648,12 @@
       "supports_price": true,
       "supports_image": true,
       "supports_reference": false,
-      "notes": "Connecteur dédié ajouté automatiquement."
+      "notes": "Connecteur dédié ajouté automatiquement.",
+      "verification": {
+        "source": "connector_registry",
+        "status": "disabled",
+        "checked_at": "2026-08-25"
+      }
     },
     {
       "name": "Salomon Store",
@@ -34664,8 +34684,8 @@
       "display_name": "Veja Store",
       "base_url": "https://www.veja-store.com",
       "category": "Marques directes",
-      "status": "active",
-      "enabled": true,
+      "status": "off",
+      "enabled": false,
       "connector_type": "dedicated",
       "currency": "EUR",
       "country": "FR",
@@ -34681,15 +34701,20 @@
       "supports_price": true,
       "supports_image": true,
       "supports_reference": false,
-      "notes": "Connecteur dédié ajouté automatiquement."
+      "notes": "Connecteur dédié ajouté automatiquement.",
+      "verification": {
+        "source": "connector_registry",
+        "status": "disabled",
+        "checked_at": "2026-08-25"
+      }
     },
     {
       "name": "Puma",
       "display_name": "Puma",
       "base_url": "https://www.puma.com",
       "category": "Marques directes",
-      "status": "active",
-      "enabled": true,
+      "status": "off",
+      "enabled": false,
       "connector_type": "dedicated",
       "currency": "EUR",
       "country": "FR",
@@ -34705,15 +34730,20 @@
       "supports_price": true,
       "supports_image": true,
       "supports_reference": false,
-      "notes": "Connecteur dédié ajouté automatiquement."
+      "notes": "Connecteur dédié ajouté automatiquement.",
+      "verification": {
+        "source": "connector_registry",
+        "status": "disabled",
+        "checked_at": "2026-08-25"
+      }
     },
     {
       "name": "Converse",
       "display_name": "Converse",
       "base_url": "https://www.converse.fr",
       "category": "Marques directes",
-      "status": "active",
-      "enabled": true,
+      "status": "off",
+      "enabled": false,
       "connector_type": "dedicated",
       "currency": "EUR",
       "country": "FR",
@@ -34729,7 +34759,12 @@
       "supports_price": true,
       "supports_image": true,
       "supports_reference": false,
-      "notes": "Connecteur dédié ajouté automatiquement."
+      "notes": "Connecteur dédié ajouté automatiquement.",
+      "verification": {
+        "source": "connector_registry",
+        "status": "disabled",
+        "checked_at": "2026-08-25"
+      }
     },
     {
       "name": "Foot Locker",
@@ -34760,8 +34795,8 @@
       "display_name": "Sneakersnstuff",
       "base_url": "https://sneakersnstuff.com",
       "category": "Sneakers / retail",
-      "status": "active",
-      "enabled": true,
+      "status": "off",
+      "enabled": false,
       "connector_type": "dedicated",
       "currency": "EUR",
       "country": "FR",
@@ -34777,15 +34812,20 @@
       "supports_price": true,
       "supports_image": true,
       "supports_reference": false,
-      "notes": "Connecteur dédié ajouté automatiquement."
+      "notes": "Connecteur dédié ajouté automatiquement.",
+      "verification": {
+        "source": "connector_registry",
+        "status": "disabled",
+        "checked_at": "2026-08-25"
+      }
     },
     {
       "name": "End Clothing",
       "display_name": "End Clothing",
       "base_url": "https://www.endclothing.com",
       "category": "Mode multimarques",
-      "status": "active",
-      "enabled": true,
+      "status": "off",
+      "enabled": false,
       "connector_type": "dedicated",
       "currency": "EUR",
       "country": "GB",
@@ -34801,15 +34841,20 @@
       "supports_price": true,
       "supports_image": true,
       "supports_reference": false,
-      "notes": "Connecteur dédié ajouté automatiquement."
+      "notes": "Connecteur dédié ajouté automatiquement.",
+      "verification": {
+        "source": "connector_registry",
+        "status": "disabled",
+        "checked_at": "2026-08-25"
+      }
     },
     {
       "name": "Cettire",
       "display_name": "Cettire",
       "base_url": "https://www.cettire.com",
       "category": "Luxe / discount",
-      "status": "active",
-      "enabled": true,
+      "status": "off",
+      "enabled": false,
       "connector_type": "dedicated",
       "currency": "EUR",
       "country": "FR",
@@ -34825,7 +34870,12 @@
       "supports_price": true,
       "supports_image": true,
       "supports_reference": false,
-      "notes": "Connecteur dédié ajouté automatiquement."
+      "notes": "Connecteur dédié ajouté automatiquement.",
+      "verification": {
+        "source": "connector_registry",
+        "status": "disabled",
+        "checked_at": "2026-08-25"
+      }
     },
     {
       "name": "The Outnet",
@@ -34849,7 +34899,15 @@
       "supports_price": true,
       "supports_image": true,
       "supports_reference": false,
-      "notes": "Connecteur dédié ajouté automatiquement."
+      "notes": "Connecteur dédié HTTP actif : collections publiques Hydrogen/Shopify décodées sans endpoint privé ni navigateur. Validation réelle Balenciaga le 29/08/2026 : 14 produits, 14 URL uniques, prix EUR.",
+      "verification": {
+        "source": "connector_registry",
+        "status": "active",
+        "checked_at": "2026-08-29",
+        "query": "Balenciaga",
+        "result_count": 14,
+        "unique_urls": 14
+      }
     },
     {
       "name": "Kith",
@@ -34880,8 +34938,8 @@
       "display_name": "Asphaltgold",
       "base_url": "https://www.asphaltgold.com",
       "category": "Sneakers / retail",
-      "status": "active",
-      "enabled": true,
+      "status": "off",
+      "enabled": false,
       "connector_type": "dedicated",
       "currency": "EUR",
       "country": "DE",
@@ -34897,15 +34955,20 @@
       "supports_price": true,
       "supports_image": true,
       "supports_reference": false,
-      "notes": "Connecteur dédié ajouté automatiquement."
+      "notes": "Connecteur dédié ajouté automatiquement.",
+      "verification": {
+        "source": "connector_registry",
+        "status": "disabled",
+        "checked_at": "2026-08-25"
+      }
     },
     {
       "name": "BSTN",
       "display_name": "BSTN",
       "base_url": "https://www.bstn.com",
       "category": "Sneakers / retail",
-      "status": "active",
-      "enabled": true,
+      "status": "off",
+      "enabled": false,
       "connector_type": "dedicated",
       "currency": "EUR",
       "country": "DE",
@@ -34921,15 +34984,20 @@
       "supports_price": true,
       "supports_image": true,
       "supports_reference": false,
-      "notes": "Connecteur dédié ajouté automatiquement."
+      "notes": "Connecteur dédié ajouté automatiquement.",
+      "verification": {
+        "source": "connector_registry",
+        "status": "disabled",
+        "checked_at": "2026-08-25"
+      }
     },
     {
       "name": "43einhalb",
       "display_name": "43einhalb",
       "base_url": "https://www.43einhalb.com",
       "category": "Sneakers / retail",
-      "status": "active",
-      "enabled": true,
+      "status": "off",
+      "enabled": false,
       "connector_type": "dedicated",
       "currency": "EUR",
       "country": "DE",
@@ -34945,15 +35013,20 @@
       "supports_price": true,
       "supports_image": true,
       "supports_reference": false,
-      "notes": "Connecteur dédié ajouté automatiquement."
+      "notes": "Connecteur dédié ajouté automatiquement.",
+      "verification": {
+        "source": "connector_registry",
+        "status": "disabled",
+        "checked_at": "2026-08-25"
+      }
     },
     {
       "name": "Laced",
       "display_name": "Laced",
       "base_url": "https://www.laced.fr",
       "category": "Seconde main",
-      "status": "active",
-      "enabled": true,
+      "status": "off",
+      "enabled": false,
       "connector_type": "dedicated",
       "currency": "EUR",
       "country": "FR",
@@ -34969,15 +35042,20 @@
       "supports_price": true,
       "supports_image": true,
       "supports_reference": false,
-      "notes": "Connecteur dédié ajouté automatiquement."
+      "notes": "Connecteur dédié ajouté automatiquement.",
+      "verification": {
+        "source": "connector_registry",
+        "status": "disabled",
+        "checked_at": "2026-08-25"
+      }
     },
     {
       "name": "Galeries Lafayette",
       "display_name": "Galeries Lafayette",
       "base_url": "https://www.galerieslafayette.com",
       "category": "Grands magasins",
-      "status": "active",
-      "enabled": true,
+      "status": "off",
+      "enabled": false,
       "connector_type": "dedicated",
       "currency": "EUR",
       "country": "FR",
@@ -34993,15 +35071,20 @@
       "supports_price": true,
       "supports_image": true,
       "supports_reference": false,
-      "notes": "Connecteur dédié ajouté automatiquement."
+      "notes": "Connecteur dédié ajouté automatiquement.",
+      "verification": {
+        "source": "connector_registry",
+        "status": "disabled",
+        "checked_at": "2026-08-25"
+      }
     },
     {
       "name": "La Redoute",
       "display_name": "La Redoute",
       "base_url": "https://www.laredoute.fr",
       "category": "Mode multimarques",
-      "status": "active",
-      "enabled": true,
+      "status": "off",
+      "enabled": false,
       "connector_type": "dedicated",
       "currency": "EUR",
       "country": "FR",
@@ -35017,7 +35100,56 @@
       "supports_price": true,
       "supports_image": true,
       "supports_reference": false,
-      "notes": "Connecteur dédié ajouté automatiquement."
+      "notes": "Connecteur dédié ajouté automatiquement.",
+      "verification": {
+        "source": "connector_registry",
+        "status": "disabled",
+        "checked_at": "2026-08-25"
+      }
+    },
+    {
+      "id": "mytheresa", "name": "Mytheresa", "display_name": "Mytheresa",
+      "base_url": "https://www.mytheresa.com", "domain": "mytheresa.com",
+      "category": "Luxe / premium", "categories": ["luxe", "premium", "mode"],
+      "tier": 4, "status": "to_test", "health_state": "EXPERIMENTAL", "enabled": false,
+      "connector_type": "unimplemented", "method": "public_html", "country": "DE", "currency": "EUR",
+      "url": "https://www.mytheresa.com", "supports_search": false, "supports_price": false, "supports_image": false, "supports_reference": false,
+      "pagination_support": false, "max_concurrency": 1,
+      "notes": "Domaine et recherche publics HTTP 200 vérifiés le 2026-08-28, mais aucun Product JSON-LD exploitable : jamais activé sans preuve produit/prix/URL.",
+      "verification": {"source": "https://www.mytheresa.com", "query": "Stone Island", "http_status": 200, "products": 0, "checked_at": "2026-08-28"}
+    },
+    {
+      "id": "luisaviaroma", "name": "Luisaviaroma", "display_name": "LUISAVIAROMA",
+      "base_url": "https://www.luisaviaroma.com", "domain": "luisaviaroma.com",
+      "category": "Luxe / premium", "categories": ["luxe", "premium", "mode"],
+      "tier": 4, "status": "blocked", "health_state": "COOLDOWN", "enabled": false,
+      "connector_type": "unimplemented", "method": "public_html", "country": "IT", "currency": "EUR",
+      "url": "https://www.luisaviaroma.com", "supports_search": false, "supports_price": false, "supports_image": false, "supports_reference": false,
+      "pagination_support": false, "max_concurrency": 1,
+      "notes": "Recherche publique observée HTTP 403 le 2026-08-28 : aucune insistance, aucun contournement.",
+      "verification": {"source": "https://www.luisaviaroma.com", "query": "Stone Island", "http_status": 403, "checked_at": "2026-08-28"}
+    },
+    {
+      "id": "mr-porter", "name": "MR PORTER", "display_name": "MR PORTER",
+      "base_url": "https://www.mrporter.com", "domain": "mrporter.com",
+      "category": "Luxe / premium", "categories": ["luxe", "premium", "mode homme"],
+      "tier": 4, "status": "off", "health_state": "DEGRADED", "enabled": false,
+      "connector_type": "unimplemented", "method": "public_html", "country": "UK", "currency": "EUR",
+      "url": "https://www.mrporter.com", "supports_search": false, "supports_price": false, "supports_image": false, "supports_reference": false,
+      "pagination_support": false, "max_concurrency": 1,
+      "notes": "Sonde publique en timeout le 2026-08-28 : désactivé, à retester plus tard sans bloquer une recherche utilisateur.",
+      "verification": {"source": "https://www.mrporter.com", "query": "Stone Island", "status": "timeout", "checked_at": "2026-08-28"}
+    },
+    {
+      "id": "24s", "name": "24S", "display_name": "24S",
+      "base_url": "https://www.24s.com", "domain": "24s.com",
+      "category": "Luxe / premium", "categories": ["luxe", "premium", "mode"],
+      "tier": 4, "status": "blocked", "health_state": "COOLDOWN", "enabled": false,
+      "connector_type": "unimplemented", "method": "public_html", "country": "FR", "currency": "EUR",
+      "url": "https://www.24s.com", "supports_search": false, "supports_price": false, "supports_image": false, "supports_reference": false,
+      "pagination_support": false, "max_concurrency": 1,
+      "notes": "Recherche publique observée HTTP 403 le 2026-08-28 : aucune insistance, aucun contournement.",
+      "verification": {"source": "https://www.24s.com", "query": "Stone Island", "http_status": 403, "checked_at": "2026-08-28"}
     }
   ]
 }

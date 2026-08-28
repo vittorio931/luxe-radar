@@ -93,7 +93,10 @@ def _gate_accepts(item: dict, intent) -> bool:
     return result is None or bool(result.accepted)
 
 
-SCHEMA_VERSION = 2
+SCHEMA_VERSION = 3
+LEARN_RANKING_ENABLED = os.environ.get(
+    "LUXE_RADAR_LEARN_RANKING_ENABLED", ""
+).strip().lower() in {"1", "true", "yes"}
 DEFAULT_MAX_AGE_SECONDS = 6 * 60 * 60
 DEFAULT_QUERY_LIMIT = 5000
 
@@ -587,8 +590,33 @@ def _ensure_schema(conn: sqlite3.Connection) -> None:
             ts REAL NOT NULL,
             message TEXT NOT NULL
         );
+        CREATE TABLE IF NOT EXISTS collector_progress (
+            query_key TEXT NOT NULL,
+            marketplace TEXT NOT NULL,
+            next_page INTEGER NOT NULL DEFAULT 1,
+            completed INTEGER NOT NULL DEFAULT 0,
+            last_progress_at REAL NOT NULL,
+            PRIMARY KEY(query_key, marketplace)
+        );
         """
     )
+    # Additive lifecycle migration: old databases remain usable in place.
+    for table in ("indexed_results", "catalog_offers"):
+        for column, ddl in (
+            ("state", "TEXT NOT NULL DEFAULT 'ACTIVE'"),
+            ("last_seen", "REAL NOT NULL DEFAULT 0"),
+            ("last_verified", "REAL NOT NULL DEFAULT 0"),
+        ):
+            try:
+                conn.execute(f"ALTER TABLE {table} ADD COLUMN {column} {ddl}")
+            except sqlite3.OperationalError:
+                pass
+        conn.execute(
+            f"UPDATE {table} SET last_seen=updated_at WHERE last_seen<=0"
+        )
+        conn.execute(
+            f"UPDATE {table} SET last_verified=updated_at WHERE last_verified<=0"
+        )
     fts = "0"
     try:
         conn.execute(
@@ -809,7 +837,57 @@ def upsert_results(results, query: str, *, path: Path | None = None, now: float 
                     "INSERT INTO catalog_fts(offer_key, search_text) VALUES(?, ?)",
                     ((row["offer_key"], row["search_text"]) for row in refreshed),
                 )
+        keys = [row[1] for row in rows]
+        if keys:
+            marks = [(now, now, query_key, key) for key in keys]
+            conn.executemany(
+                "UPDATE indexed_results SET state='ACTIVE',last_seen=?,last_verified=? "
+                "WHERE query_key=? AND offer_key=?", marks,
+            )
+        if catalog_rows:
+            conn.executemany(
+                "UPDATE catalog_offers SET state='ACTIVE',last_seen=?,last_verified=? WHERE offer_key=?",
+                ((now, now, row[0]) for row in catalog_rows),
+            )
     return len(rows)
+
+
+def collector_progress(query: str, marketplace: str, *, path: Path | None = None) -> dict:
+    """Return a persisted pagination cursor for one query/source pair."""
+    with _connect(path) as conn:
+        row = conn.execute(
+            "SELECT next_page,completed,last_progress_at FROM collector_progress "
+            "WHERE query_key=? AND marketplace=?",
+            (canonical_query(query), str(marketplace)),
+        ).fetchone()
+    return dict(row) if row else {"next_page": 1, "completed": 0, "last_progress_at": 0.0}
+
+
+def save_collector_progress(query: str, marketplace: str, next_page: int, completed: bool,
+                            *, path: Path | None = None, now: float | None = None) -> None:
+    with _connect(path) as conn:
+        conn.execute(
+            "INSERT INTO collector_progress(query_key,marketplace,next_page,completed,last_progress_at) "
+            "VALUES(?,?,?,?,?) ON CONFLICT(query_key,marketplace) DO UPDATE SET "
+            "next_page=excluded.next_page,completed=excluded.completed,last_progress_at=excluded.last_progress_at",
+            (canonical_query(query), str(marketplace), max(1, int(next_page)), int(bool(completed)),
+             float(now if now is not None else time.time())),
+        )
+
+
+def mark_offers_dead(offer_keys, *, path: Path | None = None) -> int:
+    """Hide offers confirmed gone by a connector/verifier; never guesses from age."""
+    keys = [str(key) for key in offer_keys or [] if str(key)]
+    if not keys:
+        return 0
+    with _connect(path) as conn:
+        changed = 0
+        for key in keys:
+            changed += conn.execute(
+                "UPDATE catalog_offers SET state='DEAD' WHERE offer_key=? AND state!='DEAD'", (key,)
+            ).rowcount
+            conn.execute("UPDATE indexed_results SET state='DEAD' WHERE offer_key=?", (key,))
+    return changed
 
 
 def record_collector_run(*, seed_query, marketplace, page, raw=0, parsed=0, relevant=0,
@@ -1237,6 +1315,16 @@ def _fts_terms(query: str) -> list[str]:
             required = _fold(brand).split()
             if model:
                 required.extend(_fold(model).split())
+            # Recherche par famille : les pantalons Nike Trail peuvent être
+            # publiés sous ACG, Dawn Range, Phenom Elite ou Storm-FIT sans le
+            # mot « trail ». Récupérer le catalogue Nike, puis laisser le gate
+            # central exiger pantalon + appartenance à cette famille.
+            if (
+                brand == "Nike"
+                and _fold(model) == "trail"
+                and str(getattr(info, "product_type", "") or "") == "pantalon"
+            ):
+                required = _fold(brand).split()
             # Product-type refinements are filtered after retrieval so French
             # "veste" can match English "jacket" titles.
             if required:
@@ -1246,7 +1334,7 @@ def _fts_terms(query: str) -> list[str]:
 
 
 def _global_candidates(conn, query: str, *, cutoff: float, marketplace, price_min, price_max, identity, risk, cap: int):
-    where = ["updated_at >= ?"]
+    where = ["updated_at >= ?", "state != 'DEAD'"]
     params: list[object] = [cutoff]
     _apply_sql_filters(where, params, marketplace=marketplace, price_min=price_min, price_max=price_max, identity=identity, risk=risk)
     terms = _fts_terms(query)
@@ -1278,11 +1366,10 @@ def _global_candidates(conn, query: str, *, cutoff: float, marketplace, price_mi
             "ORDER BY identity_score DESC, score DESC, updated_at DESC LIMIT ?",
             [*like_params, cap],
         ).fetchall()
-    intent = _intent_for(query)
-    # Le quality gate central applique filtres durs (marque, modèle exact,
-    # gamme, catégorie) et bonus (couleur/sexe/matière). Il remplace
-    # l'ancienne restriction catégorie qui s'éteignait dès qu'un modèle était
-    # reconnu — cause racine du bug "casquette Nike Trail" trop large.
+    # Ne pas exécuter le quality gate ici : ``search`` fusionne d'abord ces
+    # lignes avec le cache de requête exacte, puis applique le même gate une
+    # seule fois sur les offres uniques. Le faire avant ET après la fusion
+    # doublait presque le coût des recherches populaires (Adidas Samba).
     out = []
     for row in rows:
         try:
@@ -1290,8 +1377,6 @@ def _global_candidates(conn, query: str, *, cutoff: float, marketplace, price_mi
         except Exception:
             continue
         if not isinstance(item, dict):
-            continue
-        if not _gate_accepts(item, intent):
             continue
         item["_index_cached"] = True
         item["_index_global"] = True
@@ -1311,10 +1396,11 @@ def _final_tiebreak(item: dict) -> tuple:
     )
 
 
-def _python_sort(items: list[dict], sort: str, query: str) -> list[dict]:
+def _python_sort(items: list[dict], sort: str, query: str, learning_scores: dict | None = None) -> list[dict]:
     identity_order = {"fort": 0, "possible": 1, "rejet": 2}
     info = _query_info(query)
     q_key = canonical_query(query)
+    learning_scores = learning_scores or {}
     rank_cache = {}
     def rank(item):
         key = id(item)
@@ -1332,8 +1418,11 @@ def _python_sort(items: list[dict], sort: str, query: str) -> list[dict]:
     if sort == "confidence":
         return sorted(items, key=lambda item: (-_safe_float(item.get("score_confiance"), 0), -rank(item), *_final_tiebreak(item)))
     return sorted(items, key=lambda item: (
+        1 if item.get("offer_state") == "STALE" else 0,
         identity_order.get(_identity_level(item), 1),
-        -rank(item),
+        -(rank(item) + max(-2.0, min(2.0, _safe_float(
+            learning_scores.get(str(item.get("marketplace") or ""), learning_scores.get("", 0.0)), 0.0
+        )))),
         -_safe_float(item.get("score_identite"), 0),
         -_safe_float(item.get("score"), 0),
         *_final_tiebreak(item),
@@ -1372,13 +1461,14 @@ def search(
         window = max(
             max_age_seconds(),
             *[_marketplace_ttl_seconds(m) for m in MARKETPLACE_TTL_SECONDS],
+            30 * 24 * 60 * 60,
         )
         cutoff = now_ts - max(60, window)
     # Catalogue bounded to <= 10k rows: fetching the complete candidate set keeps
     # deep pagination totals exact (page 64, 100, etc.) while SQLite stays fast.
     fetch_cap = query_limit()
 
-    exact_where = ["query_key = ?", "updated_at >= ?"]
+    exact_where = ["query_key = ?", "updated_at >= ?", "state != 'DEAD'"]
     exact_params: list[object] = [query_key, cutoff]
     _apply_sql_filters(exact_where, exact_params, marketplace=marketplace, price_min=price_min, price_max=price_max, identity=identity, risk=risk)
     with _connect(path) as conn:
@@ -1391,6 +1481,18 @@ def search(
             conn, query, cutoff=cutoff, marketplace=marketplace, price_min=price_min,
             price_max=price_max, identity=identity, risk=risk, cap=query_limit(),
         )
+        learning_scores = {}
+        if LEARN_RANKING_ENABLED:
+            try:
+                learning_scores = {
+                    str(row["marketplace"]): float(row["bonus"] or 0.0)
+                    for row in conn.execute(
+                        "SELECT marketplace,bonus FROM learn_signals WHERE query_key=?",
+                        (query_key,),
+                    ).fetchall()
+                }
+            except sqlite3.OperationalError:
+                learning_scores = {}
 
     merged: dict[str, tuple[dict, float]] = {}
     for row in exact_rows:
@@ -1413,11 +1515,12 @@ def search(
     # propre TTL ; une annonce Vinted de 12h disparaît alors qu'une offre eBay
     # équivalente de 48h reste visible.
     now_ttl = time.time()
-    merged = {
-        key: (item, updated)
-        for key, (item, updated) in merged.items()
-        if updated >= now_ttl - _marketplace_ttl_seconds(item.get("marketplace"))
-    }
+    # Keep old, unconfirmed offers for cold starts, but never present them as
+    # fresh. A connector/verifier must explicitly mark a missing offer DEAD.
+    for item, updated in merged.values():
+        item["offer_state"] = (
+            "ACTIVE" if updated >= now_ttl - _marketplace_ttl_seconds(item.get("marketplace")) else "STALE"
+        )
 
     # V3.7.x : gate de pertinence central sur TOUTES les offres fusionnées
     # (lignes exact-query comprises). Garantit la propriété de sous-ensemble :
@@ -1437,7 +1540,9 @@ def search(
         item["last_seen_at"] = updated
         item["last_verified_at"] = updated
 
-    ordered = _python_sort([item for item, _updated in merged.values()], sort, query)
+    ordered = _python_sort(
+        [item for item, _updated in merged.values()], sort, query, learning_scores
+    )
     for item in ordered:
         item.pop("_quality", None)
     total = min(len(ordered), query_limit())
@@ -1595,14 +1700,30 @@ def stats(*, path: Path | None = None) -> dict:
                 "SELECT COUNT(*) AS offers, COUNT(DISTINCT query_key) AS queries, MAX(updated_at) AS newest FROM indexed_results"
             ).fetchone()
             catalog = conn.execute(
-                "SELECT COUNT(*) AS offers, MAX(updated_at) AS newest FROM catalog_offers"
+                "SELECT COUNT(*) AS offers, MAX(updated_at) AS newest, "
+                "SUM(CASE WHEN state='DEAD' THEN 1 ELSE 0 END) AS dead, "
+                "SUM(CASE WHEN state='ACTIVE' THEN 1 ELSE 0 END) AS active FROM catalog_offers"
             ).fetchone()
+            lifecycle_rows = conn.execute(
+                "SELECT marketplace,state,updated_at FROM catalog_offers"
+            ).fetchall()
             fts_row = conn.execute("SELECT value FROM index_meta WHERE key='fts5'").fetchone()
         newest = max(float(row["newest"] or 0.0), float(catalog["newest"] or 0.0))
         return {
             "enabled": True,
             "offers": int(row["offers"] or 0),
             "catalog_offers": int(catalog["offers"] or 0),
+            "active": sum(
+                1 for life in lifecycle_rows
+                if life["state"] != "DEAD" and float(life["updated_at"] or 0) >=
+                time.time() - _marketplace_ttl_seconds(life["marketplace"])
+            ),
+            "stale": sum(
+                1 for life in lifecycle_rows
+                if life["state"] != "DEAD" and float(life["updated_at"] or 0) <
+                time.time() - _marketplace_ttl_seconds(life["marketplace"])
+            ),
+            "dead": int(catalog["dead"] or 0),
             "queries": int(row["queries"] or 0),
             "newest_age_seconds": max(0.0, time.time() - newest) if newest else None,
             "db_path": str((path or default_db_path()).resolve()),
@@ -1626,18 +1747,21 @@ def stats(*, path: Path | None = None) -> dict:
 def prune(*, path: Path | None = None, older_than_seconds: int = 7 * 24 * 60 * 60) -> int:
     cutoff = time.time() - max(60, int(older_than_seconds))
     with _connect(path) as conn:
-        cursor = conn.execute("DELETE FROM indexed_results WHERE updated_at < ?", (cutoff,))
-        exact_deleted = max(0, int(cursor.rowcount or 0))
+        # Age alone is not proof that an offer disappeared: retain it as STALE.
+        conn.execute("UPDATE indexed_results SET state='STALE' WHERE updated_at < ? AND state='ACTIVE'", (cutoff,))
+        conn.execute("UPDATE catalog_offers SET state='STALE' WHERE updated_at < ? AND state='ACTIVE'", (cutoff,))
         stale_keys = [row[0] for row in conn.execute(
-            "SELECT offer_key FROM catalog_offers WHERE updated_at < ?", (cutoff,)
+            "SELECT offer_key FROM catalog_offers WHERE state='DEAD' AND updated_at < ? LIMIT 500", (cutoff,)
         ).fetchall()]
-        conn.execute("DELETE FROM catalog_offers WHERE updated_at < ?", (cutoff,))
+        for key in stale_keys:
+            conn.execute("DELETE FROM catalog_offers WHERE offer_key=?", (key,))
+            conn.execute("DELETE FROM indexed_results WHERE offer_key=?", (key,))
         if stale_keys:
             try:
                 conn.executemany("DELETE FROM catalog_fts WHERE offer_key = ?", ((key,) for key in stale_keys))
             except sqlite3.OperationalError:
                 pass
-        return exact_deleted + len(stale_keys)
+        return len(stale_keys)
 
 
 

@@ -227,6 +227,10 @@ def parse_jsonld_products(text, base_url):
                 "lien": url,
                 "reference": str(node.get("sku") or node.get("mpn") or "").strip() or None,
                 "disponible": "OutOfStock" not in str(offer.get("availability") or ""),
+                "brand": str((node.get("brand") or {}).get("name") if isinstance(node.get("brand"), dict) else node.get("brand") or "").strip() or None,
+                "designer": str((node.get("brand") or {}).get("name") if isinstance(node.get("brand"), dict) else node.get("brand") or "").strip() or None,
+                "couleur": str(node.get("color") or "").strip() or None,
+                "categorie_source": str(node.get("category") or "").strip() or None,
             })
     return results
 
@@ -385,6 +389,103 @@ def parse_product_div_cards(text, base_url, allowed_path_hints=()):
     return results
 
 
+_ROUTER_CHUNK_RE = re.compile(
+    r'window\.__reactRouterContext\.streamController\.enqueue\(("(?:\\.|[^"\\])*")\)',
+    re.S,
+)
+
+
+def parse_hydrogen_products(text, base_url):
+    """Lit les produits du state public Hydrogen/React Router.
+
+    Le state est un tableau JSON aplati : les cles ``_123`` et les valeurs
+    entieres referencent d'autres positions du tableau. On ne reconstruit pas
+    tout l'arbre (qui peut etre cyclique), seulement les objets Product dont
+    on a besoin : titre, handle, prix, devise et image.
+    """
+    chunks = []
+    for match in _ROUTER_CHUNK_RE.finditer(text or ""):
+        try:
+            chunks.append(json.loads(match.group(1)))
+        except (TypeError, ValueError):
+            continue
+    if not chunks:
+        return []
+    pool = None
+    # Le premier fragment est le tableau principal. Les fragments suivants
+    # (``P1513:...``) sont des resolutions de promesses React et ne doivent pas
+    # etre concatenes au JSON initial.
+    for chunk in chunks:
+        if not str(chunk).lstrip().startswith("["):
+            continue
+        try:
+            candidate = json.loads(chunk)
+        except (TypeError, ValueError):
+            continue
+        if isinstance(candidate, list):
+            pool = candidate
+            break
+    if not isinstance(pool, list):
+        return []
+
+    def value(ref):
+        if isinstance(ref, bool) or not isinstance(ref, int) or ref < 0 or ref >= len(pool):
+            return ref if not isinstance(ref, int) else None
+        return pool[ref]
+
+    def object_fields(raw):
+        if not isinstance(raw, dict):
+            return {}
+        fields = {}
+        for key_ref, val_ref in raw.items():
+            if isinstance(key_ref, str) and key_ref.startswith("_") and key_ref[1:].isdigit():
+                key = value(int(key_ref[1:]))
+            else:
+                key = key_ref
+            if isinstance(key, str):
+                fields[key] = val_ref
+        return fields
+
+    def nested_fields(ref):
+        return object_fields(value(ref))
+
+    results = []
+    seen = set()
+    for raw in pool:
+        fields = object_fields(raw)
+        if not {"title", "handle", "priceRange"}.issubset(fields):
+            continue
+        title = value(fields["title"])
+        handle = value(fields["handle"])
+        price_range = nested_fields(fields["priceRange"])
+        price_ref = price_range.get("minVariantPrice") or price_range.get("maxVariantPrice")
+        price_fields = nested_fields(price_ref)
+        price = _safe_float(value(price_fields.get("amount")))
+        currency = str(value(price_fields.get("currencyCode")) or "EUR").upper()
+        if not isinstance(title, str) or not isinstance(handle, str) or not price or price <= 0:
+            continue
+        image = None
+        image_fields = nested_fields(fields.get("featuredImage"))
+        image_value = value(image_fields.get("url"))
+        if isinstance(image_value, str) and image_value:
+            image = image_value
+        link = urljoin(base_url + "/", f"products/{handle}")
+        key = (link, round(price, 2))
+        if key in seen:
+            continue
+        seen.add(key)
+        results.append({
+            "titre": " ".join(title.split()),
+            "prix": round(price, 2),
+            "devise_originale": currency,
+            "image": image,
+            "lien": link,
+            "reference": None,
+            "disponible": True,
+        })
+    return results
+
+
 class _PublicRetailBase(MarketplaceConnector):
     name = "Marketplace"  # ignoré par l'auto-loader
     display_name = "Marketplace"
@@ -421,6 +522,14 @@ class _PublicRetailBase(MarketplaceConnector):
     def build_search_url(self, query, page=1):
         urls = self.build_search_urls(query, page=page)
         return urls[0] if urls else self.base_url
+
+    def parse_public_results(self, text):
+        raw = parse_jsonld_products(text, self.base_url)
+        if not raw:
+            raw = parse_html_cards(text, self.base_url, self.allowed_path_hints)
+        if not raw:
+            raw = parse_product_div_cards(text, self.base_url, self.allowed_path_hints)
+        return raw
 
     def search(self, query, price_max=None, limit=20, page=1):
         query = str(query or "").strip()
@@ -483,11 +592,7 @@ class _PublicRetailBase(MarketplaceConnector):
                 if any(marker in low for marker in ("captcha", "access denied", "verify you are human", "cf challenge")):
                     print(f"[{self.name}] Contrôle d'accès détecté -> route ignorée")
                     continue
-                raw = parse_jsonld_products(text, self.base_url)
-                if not raw:
-                    raw = parse_html_cards(text, self.base_url, self.allowed_path_hints)
-                if not raw:
-                    raw = parse_product_div_cards(text, self.base_url, self.allowed_path_hints)
+                raw = self.parse_public_results(text)
                 print(
                     f"[{self.name}][ROUTE {route_index}] "
                     f"page={page} cartes_parsées={len(raw)} "
@@ -538,7 +643,10 @@ class _PublicRetailBase(MarketplaceConnector):
                 link = str(item.get("lien") or "").strip()
                 if not title or price is None or price <= 0 or not link:
                     continue
-                if price_max_f is not None and price > price_max_f:
+                source_currency = str(item.get("devise_originale") or self.currency or "EUR").upper()
+                # Never compare a GBP/USD price to an EUR ceiling without a
+                # verified FX conversion. Keep it and expose the true currency.
+                if price_max_f is not None and source_currency == "EUR" and price > price_max_f:
                     continue
                 key = (link, round(price, 2))
                 if key in seen:
@@ -551,14 +659,18 @@ class _PublicRetailBase(MarketplaceConnector):
                     "prix": round(price, 2),
                     "prix_original": round(price, 2),
                     "prix_compare_original": None,
-                    "devise_originale": str(item.get("devise_originale") or "EUR").upper(),
-                    "devise": "EUR",
+                    "devise_originale": str(item.get("devise_originale") or self.currency or "EUR").upper(),
+                    "devise": str(item.get("devise_originale") or self.currency or "EUR").upper(),
                     "lien": link,
                     "image": item.get("image"),
+                    "marque": item.get("brand"),
+                    "brand": item.get("brand"),
+                    "designer": item.get("designer"),
+                    "couleur": item.get("couleur"),
                     "modele": None,
                     "reference": item.get("reference"),
                     "vendor": None,
-                    "type_produit_site": None,
+                    "type_produit_site": item.get("categorie_source"),
                     "disponible": bool(item.get("disponible", True)),
                     "reduction_pourcent": None,
                     "categorie": "A VERIFIER",
@@ -1016,12 +1128,65 @@ class TheOutnetConnector(_PublicRetailBase):
     name = "The Outnet"
     display_name = "The Outnet"
     base_url = "https://www.theoutnet.com"
-    enabled = False  # HTTP 200 but parses 0 cards (JS-rendered)
-    search_templates = (
-        "https://www.theoutnet.com/fr/fr/search?q={q}&page={page}",
-        "https://www.theoutnet.com/fr/fr/search?query={q}&page={page}",
+    enabled = True
+    supports_pagination = False
+    max_pages = 1
+    allowed_path_hints = ("/products/",)
+
+    _DESIGNERS = {
+        "balenciaga", "bottega veneta", "burberry", "chloe", "dolce gabbana",
+        "fendi", "givenchy", "gucci", "isabel marant", "jacquemus", "lanvin",
+        "loewe", "marni", "moncler", "prada", "saint laurent", "stella mccartney",
+        "valentino", "versace", "zimmermann",
+    }
+    _CATEGORY_PATHS = (
+        (("pantalon", "pants", "trouser", "jogging", "sweatpant"), ("pant", "trouser", "sweatpant", "jogger")),
+        (("jean", "denim"), ("jean", "denim")),
+        (("short",), ("short",)),
+        (("veste", "jacket", "blouson", "bomber"), ("jacket", "blazer", "bomber")),
+        (("manteau", "coat", "trench", "parka"), ("coat", "trench", "parka")),
+        (("robe", "dress"), ("dress",)),
+        (("jupe", "skirt"), ("skirt",)),
+        (("chemise", "shirt", "blouse"), ("shirt", "blouse")),
+        (("pull", "sweater", "hoodie", "sweat", "t shirt", "tshirt", "top"), ("sweater", "hoodie", "sweatshirt", "t-shirt", "t-shirt", "top")),
+        (("chaussure", "shoe", "sneaker", "basket", "boot", "mocassin"), ("shoe", "sneaker", "trainer", "boot", "loafer", "mule", "pump", "sandal")),
+        (("sac", "bag", "tote", "pochette"), ("bag", "tote", "clutch", "pouch")),
+        (("lunette", "sunglass"), ("sunglass", "eyewear")),
     )
-    allowed_path_hints = ("/fr/fr/", "/product", "/p/")
+
+    @staticmethod
+    def _slug(value):
+        value = _norm(value).replace("'", "")
+        return re.sub(r"[^a-z0-9]+", "-", value).strip("-")
+
+    def build_search_urls(self, query, page=1):
+        normalized = _norm(query)
+        designer = next(
+            (name for name in sorted(self._DESIGNERS, key=len, reverse=True) if name in normalized),
+            normalized,
+        )
+        slug = self._slug(designer)
+        if not slug:
+            return []
+        return [
+            f"https://www.theoutnet.com/en-fr/shop/designers/{slug}",
+            f"https://www.theoutnet.com/en-fr/shop/mens/designers/{slug}",
+        ]
+
+    def parse_public_results(self, text):
+        return parse_hydrogen_products(text, self.base_url)
+
+    def search(self, query, price_max=None, limit=20, page=1):
+        results = super().search(query=query, price_max=price_max, limit=limit, page=page)
+        normalized = _norm(query)
+        wanted = next(
+            (title_terms for query_terms, title_terms in self._CATEGORY_PATHS
+             if any(term in normalized for term in query_terms)),
+            (),
+        )
+        if not wanted:
+            return results
+        return [item for item in results if any(term in _norm(item.get("titre")) for term in wanted)]
 
 
 # ---------------------------------------------------------------------------
@@ -1181,6 +1346,7 @@ class BazarChicConnector(_PublicRetailBase):
     name = "BazarChic"
     display_name = "BazarChic"
     base_url = "https://www.bazarchic.com"
+    enabled = False  # absent du catalogue vérifié, aucun résultat réel validé
     search_templates = (
         "https://www.bazarchic.com/recherche?q={q}&page={page}",
         "https://www.bazarchic.com/search?q={q}&page={page}",
@@ -1192,6 +1358,7 @@ class CocoonCenterConnector(_PublicRetailBase):
     name = "Cocooncenter"
     display_name = "Cocooncenter"
     base_url = "https://www.cocooncenter.com"
+    enabled = False  # hors périmètre mode principal, aucun résultat réel validé
     search_templates = (
         "https://www.cocooncenter.com/recherche?q={q}&page={page}",
         "https://www.cocooncenter.com/search?q={q}&page={page}",
@@ -1203,6 +1370,7 @@ class MerlinConnector(_PublicRetailBase):
     name = "Merlin"
     display_name = "Merlin"
     base_url = "https://www.merlin-pc.com"
+    enabled = False  # hors périmètre shopping mode, aucun résultat réel validé
     search_templates = (
         "https://www.merlin-pc.com/search?q={q}&page={page}",
         "https://www.merlin-pc.com/recherche?q={q}&page={page}",

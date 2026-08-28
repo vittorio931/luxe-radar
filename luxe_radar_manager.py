@@ -1237,13 +1237,63 @@ def sync_registry(root: Path):
     # On valide donc les données et la correspondance avec les connecteurs au
     # lieu de régénérer une liste Python statique.
     sites_data = load_json(root / "marketplaces" / "sites.json", DEFAULT_SITES_JSON)
-    if int(sites_data.get("version", 1)) >= 2:
+    raw_catalog_version = sites_data.get("version", 1)
+    try:
+        dynamic_catalog = int(raw_catalog_version) >= 2
+    except (TypeError, ValueError):
+        # Les catalogues datés modernes utilisent par exemple
+        # ``2026.08.15-v350`` au lieu d'un entier de schéma.
+        dynamic_catalog = bool(str(raw_catalog_version or "").strip())
+    if dynamic_catalog:
         sites = [site for site in sites_data.get("sites", []) if isinstance(site, dict)]
         discovered = discover_connector_names(root, include_disabled=True)
+        discovered_by_name = {
+            str(name).strip().casefold(): dict(meta or {})
+            for name, meta in discovered.items()
+        }
         names = {str(site.get("name") or "").casefold() for site in sites}
         missing = [name for name in discovered if name.casefold() not in names]
         if missing:
             warn("Connecteurs absents du catalogue : " + ", ".join(sorted(missing)))
+        changed = 0
+        for site in sites:
+            name = str(site.get("name") or "").strip().casefold()
+            meta = discovered_by_name.get(name)
+            if meta is None:
+                # Une simple entrée de catalogue ne devient jamais une source
+                # active sans connecteur réellement découvrable.
+                wanted_enabled = False
+                if site.get("status") != "active" and not site.get("enabled"):
+                    continue
+                wanted_status = "off"
+            else:
+                wanted_enabled = bool(meta.get("enabled"))
+                if wanted_enabled:
+                    wanted_status = "active"
+                elif site.get("status") == "active" or site.get("enabled"):
+                    wanted_status = "off"
+                else:
+                    # Préserver blocked/to_test/non_implemented : ces statuts
+                    # portent plus d'information que le simple état OFF.
+                    wanted_status = str(site.get("status") or "off")
+            if not wanted_enabled:
+                verification = dict(site.get("verification") or {})
+                if not verification.get("source"):
+                    verification.update(
+                        source="connector_registry",
+                        status="disabled",
+                        checked_at=_dt.datetime.now().strftime("%Y-%m-%d"),
+                    )
+                    site["verification"] = verification
+                    changed += 1
+            if bool(site.get("enabled")) != wanted_enabled or str(site.get("status")) != wanted_status:
+                site["enabled"] = wanted_enabled
+                site["status"] = wanted_status
+                changed += 1
+        if changed:
+            sites_data["sites"] = sites
+            save_json(root / "marketplaces" / "sites.json", sites_data)
+            ok(f"Catalogue synchronisé : {changed} statut(s) corrigé(s)")
         active = sum(1 for site in sites if site.get("status") == "active" and site.get("enabled"))
         ok(f"Registry dynamique vérifié : {len(sites)} site(s), {active} actif(s)")
         return

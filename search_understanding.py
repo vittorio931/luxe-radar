@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, asdict
 from difflib import SequenceMatcher
+from functools import lru_cache
 import re
 import unicodedata
 
@@ -56,6 +57,7 @@ BRAND_ALIASES = {
     "Gucci": ("gucci", "gucchi"),
     "Prada": ("prada", "pradda"),
     "Balenciaga": ("balenciaga", "balanciaga"),
+    "Louis Vuitton": ("louis vuitton", "louiss vuitton", "louis vitton", "louis vuttion", "lv"),
     "Patagonia": ("patagonia", "patagoina"),
 }
 for _brand in MARQUES_MODELES:
@@ -84,16 +86,16 @@ SAFE_WORD_FIXES = {
 }
 
 TYPE_ALIASES = {
-    "pantalon": ("pantalon", "pantalons", "pant", "pants", "trouser", "trousers", "jogger", "joggers"),
+    "pantalon": ("pantalon", "pantalons", "pant", "pants", "trouser", "trousers", "jogger", "joggers", "leggings", "chino", "chinos", "slacks"),
     "sweat": ("sweat", "sweatshirt", "hoodie", "crewneck"),
     "t-shirt": ("t shirt", "tshirt", "tee shirt", "tee"),
-    "veste": ("veste", "jacket", "coat", "blouson", "windbreaker"),
-    "short": ("short", "shorts", "bermuda"),
+    "veste": ("veste", "jacket", "coat", "blouson", "windbreaker", "bomber", "anorak", "shell jacket"),
+    "short": ("short", "shorts", "bermuda", "swim shorts", "boardshort", "boardshorts"),
     "ensemble": ("ensemble", "tracksuit", "track suit", "matching set", "survetement", "co ord"),
     "chaussures": ("chaussure", "chaussures", "shoe", "shoes", "sneaker", "sneakers", "trainers", "basket", "baskets"),
-    "pull": ("pull", "sweater", "pullover", "knit"),
+    "pull": ("pull", "sweater", "pullover", "knit", "knitwear", "cardigan"),
     "polo": ("polo",),
-    "chemise": ("chemise", "shirt"),
+    "chemise": ("chemise", "shirt", "button down", "button-down", "overshirt"),
     "brassiere": ("brassiere", "brassieres", "bra", "sports bra", "sport bra", "soutien gorge", "soutien-gorge"),
     "cargo": ("cargo",),
 }
@@ -282,6 +284,12 @@ def _best_model(tokens: list[str], brand: str | None):
     for model, model_n, variants in _model_candidates(brand):
         if model_n in generic:
             continue
+        # Une famille générique sans numéro (ex. « Asics Gel Kayano ») ne doit
+        # jamais être transformée en une version précise inventée (« 14 »).
+        # Les typos numériques restent corrigibles dès que l'utilisateur a
+        # réellement saisi au moins un chiffre (P-600, Kayano 41, etc.).
+        if re.search(r"\d", model_n) and not any(re.search(r"\d", token) for token in remaining):
+            continue
         for variant in variants:
             vt = _tokens(variant)
             if not vt or len(vt) > len(remaining):
@@ -328,6 +336,7 @@ def _pretty(tokens: list[str], brand: str | None, model: str | None) -> str:
     return text
 
 
+@lru_cache(maxsize=1024)
 def understand_query(query: str) -> SearchUnderstanding:
     original = " ".join(str(query or "").split())[:120]
     if not original:

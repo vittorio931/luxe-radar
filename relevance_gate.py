@@ -31,6 +31,12 @@ from search_intent import (
 )
 
 
+_NIKE_TRAIL_PANTS_FAMILY = (
+    "trail", "trail running", "acg", "all conditions gear", "dawn range",
+    "phenom elite", "trail repel", "storm fit", "storm-fit",
+)
+
+
 def _safe_float(value, default: float = 0.0) -> float:
     try:
         if value in (None, ""):
@@ -82,14 +88,25 @@ _NON_FOOTWEAR_TYPES = frozenset({
     "sac", "ceinture", "echarpe", "gants", "debardeur", "brassiere",
 })
 
+# Une seule expression compilée remplace plusieurs dizaines de ``re.search``
+# par offre pour les modèles chaussures connus (Samba, AF1, P-6000...).
+_NON_FOOTWEAR_ALIASES = tuple(dict.fromkeys(
+    _fold(alias)
+    for canonical, aliases in TYPE_ALIASES.items()
+    if canonical in _NON_FOOTWEAR_TYPES
+    for alias in aliases
+    if _fold(alias)
+))
+_NON_FOOTWEAR_PATTERN = re.compile(
+    r"(?<![a-z0-9])(?:"
+    + "|".join(re.escape(alias) for alias in sorted(_NON_FOOTWEAR_ALIASES, key=len, reverse=True))
+    + r")(?![a-z0-9])"
+)
+
 
 def _explicit_non_footwear_type(title_fold: str) -> str | None:
-    for canonical, aliases in TYPE_ALIASES.items():
-        if canonical not in _NON_FOOTWEAR_TYPES:
-            continue
-        if any(_match_alias(title_fold, alias) for alias in aliases):
-            return canonical
-    return None
+    match = _NON_FOOTWEAR_PATTERN.search(title_fold)
+    return match.group(0) if match else None
 
 
 def evaluate_offer(intent_or_query, offer: dict) -> QualityResult:
@@ -165,6 +182,8 @@ def evaluate_offer(intent_or_query, offer: dict) -> QualityResult:
     # --- Gamme / usage (dur) ---------------------------------------------------
     if intent.line:
         aliases = LINE_ALIASES.get(intent.line, (intent.line,))
+        if intent.brand == "Nike" and intent.line == "trail" and intent.product_type == "pantalon":
+            aliases = tuple(dict.fromkeys((*aliases, *_NIKE_TRAIL_PANTS_FAMILY)))
         line_match = any(_match_alias(title_fold, alias) for alias in aliases)
         if line_match:
             score += 15.0

@@ -3,13 +3,72 @@
 from __future__ import annotations
 
 import json
+from dataclasses import asdict, dataclass
 from functools import lru_cache
 from pathlib import Path
+from urllib.parse import urlparse
 
 
 CATALOG_PATH = Path(__file__).with_name("sites.json")
 VALID_STATUSES = {"active", "off", "to_test", "blocked", "non_implemented"}
 VALID_CONNECTOR_TYPES = {"dedicated", "shopify", "json", "playwright", "unimplemented"}
+VALID_METHODS = {"official_api", "public_feed", "public_json", "public_html", "generic_retail_adapter", "dedicated_connector"}
+
+
+@dataclass(frozen=True)
+class MarketplaceDefinition:
+    id: str
+    name: str
+    domain: str
+    country: str
+    categories: tuple[str, ...]
+    tier: int
+    enabled: bool
+    method: str
+    connector: str
+    health_state: str
+    cooldown_until: float
+    last_success: float | None
+    last_failure: float | None
+    avg_latency: float | None
+    success_rate: float
+    results_rate: float
+    pagination_support: bool
+    max_concurrency: int
+    notes: str
+
+
+def _definition(site) -> MarketplaceDefinition:
+    status = str(site.get("status") or "to_test")
+    connector_type = str(site.get("connector_type") or "unimplemented")
+    method = str(site.get("method") or {
+        "dedicated": "dedicated_connector", "shopify": "public_json",
+        "json": "public_json", "playwright": "public_html",
+    }.get(connector_type, "generic_retail_adapter"))
+    if method not in VALID_METHODS:
+        method = "generic_retail_adapter"
+    category = str(site.get("category") or "Autres")
+    tier = site.get("tier")
+    if tier not in {1, 2, 3, 4}:
+        tier = 1 if status == "active" and connector_type == "dedicated" else 2 if status == "active" else 4
+    health_state = str(site.get("health_state") or {
+        "active": "HEALTHY", "blocked": "COOLDOWN", "to_test": "EXPERIMENTAL",
+        "off": "DISABLED", "non_implemented": "DISABLED",
+    }.get(status, "EXPERIMENTAL")).upper()
+    return MarketplaceDefinition(
+        id=str(site.get("id") or site["name"]).strip().casefold().replace(" ", "-"),
+        name=site["name"], domain=str(site.get("domain") or urlparse(site.get("base_url") or "").netloc).casefold().removeprefix("www."), country=str(site.get("country") or ""),
+        categories=tuple(str(x) for x in (site.get("categories") or [category]) if str(x)),
+        tier=int(tier), enabled=bool(site.get("enabled")), method=method,
+        connector=str(site.get("connector") or site.get("connector_type") or ""),
+        health_state=health_state, cooldown_until=float(site.get("cooldown_until") or 0),
+        last_success=site.get("last_success"), last_failure=site.get("last_failure"),
+        avg_latency=site.get("avg_latency"), success_rate=float(site.get("success_rate") or 0),
+        results_rate=float(site.get("results_rate") or 0),
+        pagination_support=bool(site.get("pagination_support") or site.get("supports_pagination")),
+        max_concurrency=max(1, min(int(site.get("max_concurrency") or 1), 4)),
+        notes=str(site.get("notes") or ""),
+    )
 
 
 def _normalized_site(raw):
@@ -93,6 +152,22 @@ def get_categories():
     for site in load_catalog():
         groups.setdefault(site["category"], []).append(site["name"])
     return groups
+
+
+def get_definitions(enabled=None):
+    definitions = [_definition(site) for site in load_catalog()]
+    if enabled is not None:
+        definitions = [item for item in definitions if item.enabled is bool(enabled)]
+    return definitions
+
+
+def get_definition(name):
+    site = get_site(name)
+    return _definition(site) if site else None
+
+
+def definitions_json(enabled=None):
+    return [asdict(item) for item in get_definitions(enabled=enabled)]
 
 
 def invalidate_catalog_cache():

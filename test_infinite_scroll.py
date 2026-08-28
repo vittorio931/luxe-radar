@@ -44,6 +44,10 @@ def sample_results(count=170):
 
 
 def main():
+    app_js = (ROOT / "static" / "app.js").read_text(encoding="utf-8")
+    assert "pendingResultReset=true;loadEpoch++" in app_js
+    assert "await expandSearch()" not in app_js
+    assert "expandSearch().then(()=>scheduleAutoLoad(220))" in app_js
     assert _safe_number(float("nan"), 7) == 7
     assert _safe_number(float("inf"), 8) == 8
     reference_results = [{"titre": "Nike Pegasus DM4652 040", "score": 80}, {"titre": "Nike Trail sans ref", "score": 90}]
@@ -108,7 +112,7 @@ def main():
     assert len(batch200["results"]) == 170 and batch200["has_more"] is False
     batch100 = client.get(f"/api/results/{token}?offset=0&limit=100").get_json()
     assert len(batch100["results"]) == 100 and batch100["next_offset"] == 100 and batch100["has_more"] is True
-    assert client.get(f"/api/results/{token}?offset=0&limit=201").status_code == 400
+    assert client.get(f"/api/results/{token}?offset=0&limit=501").status_code == 400
     assert client.get(f"/api/results/{token}?offset=0&limit=bad").status_code == 400
 
     price_page = client.get(f"/api/results/{token}?offset=0&sort=price_asc").get_json()
@@ -203,10 +207,12 @@ def main():
         assert len(calls) == 1
         lots_response = client.post("/", data={"marque": "Nike Trail", "prix": "50", "plateforme": "Toutes", "lots": "100", "csrf_token": csrf_token})
         lots_html = lots_response.get_data(as_text=True)
-        assert 'id="shown-count">' in lots_html and 'id="total-count">' in lots_html and '"pending": true' in lots_html
+        # Modifier uniquement la taille du lot réutilise la recherche terminée :
+        # aucun nouveau scan et le token reste identique.
+        assert 'id="shown-count">' in lots_html and 'id="total-count">' in lots_html and '"pending": false' in lots_html
         assert '<option value="100" selected>' in lots_html and "window.LUXE_RADAR" in lots_html
         lots_token = _search_token_from(lots_html)
-        assert lots_token
+        assert lots_token == post_token
         lots_results = _await_search(client, lots_token)
         assert len(lots_results) == 170
 

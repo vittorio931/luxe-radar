@@ -26,6 +26,7 @@ CREATE TABLE IF NOT EXISTS search_sessions (
     reference TEXT NOT NULL DEFAULT '',
     reference_stricte INTEGER NOT NULL DEFAULT 0,
     universe TEXT NOT NULL DEFAULT '',
+    request_signature TEXT NOT NULL DEFAULT '',
     state_json TEXT NOT NULL DEFAULT '{}',
     created_at REAL NOT NULL,
     updated_at REAL NOT NULL
@@ -85,6 +86,17 @@ def _initialize():
         try:
             connection.execute("PRAGMA journal_mode=WAL")
             connection.executescript(_SCHEMA)
+            columns = {
+                str(row[1]) for row in connection.execute("PRAGMA table_info(search_sessions)")
+            }
+            if "request_signature" not in columns:
+                connection.execute(
+                    "ALTER TABLE search_sessions ADD COLUMN request_signature TEXT NOT NULL DEFAULT ''"
+                )
+            connection.execute(
+                "CREATE INDEX IF NOT EXISTS idx_search_sessions_owner_signature "
+                "ON search_sessions (owner, request_signature, updated_at DESC)"
+            )
             connection.commit()
             _SCHEMA_READY_PATHS.add(key)
         finally:
@@ -101,6 +113,7 @@ def save_search_session(
     reference="",
     reference_stricte=False,
     universe="",
+    request_signature="",
     state=None,
 ):
     """Upsert l'état persistant d'une recherche (appelé hors du chemin critique)."""
@@ -116,9 +129,9 @@ def save_search_session(
                 """
                 INSERT INTO search_sessions (
                     token, owner, search_request, search_price_raw,
-                    selected_platform, reference, reference_stricte, universe,
+                    selected_platform, reference, reference_stricte, universe, request_signature,
                     state_json, created_at, updated_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT(token) DO UPDATE SET
                     owner = excluded.owner,
                     search_request = excluded.search_request,
@@ -127,6 +140,7 @@ def save_search_session(
                     reference = excluded.reference,
                     reference_stricte = excluded.reference_stricte,
                     universe = excluded.universe,
+                    request_signature = excluded.request_signature,
                     state_json = excluded.state_json,
                     updated_at = excluded.updated_at
                 """,
@@ -139,6 +153,7 @@ def save_search_session(
                     str(reference or ""),
                     1 if reference_stricte else 0,
                     str(universe or ""),
+                    str(request_signature or ""),
                     json.dumps(state or {}),
                     now,
                     now,
@@ -180,10 +195,32 @@ def load_search_session(token):
         "reference": str(row["reference"] or ""),
         "reference_stricte": bool(row["reference_stricte"]),
         "universe": str(row["universe"] or ""),
+        "request_signature": str(row["request_signature"] or ""),
         "state": state,
         "created_at": float(row["created_at"] or 0),
         "updated_at": float(row["updated_at"] or 0),
     }
+
+
+def find_search_session(owner, request_signature):
+    """Dernière session encore présente pour une recherche de ce navigateur."""
+    owner = str(owner or "")
+    request_signature = str(request_signature or "")
+    if not owner or not request_signature:
+        return None
+    with _LOCK:
+        _initialize()
+        connection = _connect()
+        try:
+            row = connection.execute(
+                "SELECT token FROM search_sessions "
+                "WHERE owner=? AND request_signature=? "
+                "ORDER BY updated_at DESC LIMIT 1",
+                (owner, request_signature),
+            ).fetchone()
+        finally:
+            connection.close()
+    return load_search_session(str(row["token"])) if row is not None else None
 
 
 def delete_search_session(token):

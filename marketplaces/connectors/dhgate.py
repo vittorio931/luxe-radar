@@ -301,7 +301,7 @@ def _query_variants(query):
 class DHgateConnector(MarketplaceConnector):
     name = "DHgate"
     display_name = "DHgate"
-    enabled = True
+    enabled = False  # HTTP 403 observé ; aucune tentative de contournement
     currency = "EUR"
 
     supports_pagination = False

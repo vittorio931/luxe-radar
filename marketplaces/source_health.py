@@ -108,6 +108,10 @@ class _SourceHealthEntry:
         self.consecutive_failures = 0
         self.blocked = False
         self.runs = 0
+        self.successful_runs = 0
+        self.failed_runs = 0
+        self.parsing_failures = 0
+        self.timeout_failures = 0
         self.network_samples = deque(maxlen=12)
         self.queue_samples = deque(maxlen=12)
         self.relevant_samples = deque(maxlen=8)
@@ -146,6 +150,7 @@ class SourceHealthRegistry:
                 entry.last_failure_at = time.time()
                 entry.cooldown_until = time.time() + COOLDOWN_BLOCKED_SECONDS
                 entry.cooldown_reason = f"HTTP {status}"
+                entry.failed_runs += 1
 
     def record_blocked(self, name, reason="refus/challenge"):
         """Blocage observe sans statut HTTP precis (challenge, page anti-bot)."""
@@ -155,6 +160,8 @@ class SourceHealthRegistry:
             entry = self._entry(name)
             entry.blocked = True
             entry.consecutive_failures += 1
+            entry.failed_runs += 1
+            entry.timeout_failures += 1
             entry.last_failure_at = time.time()
             entry.cooldown_until = time.time() + COOLDOWN_BLOCKED_SECONDS
             entry.cooldown_reason = str(reason or "refus/challenge")
@@ -219,6 +226,7 @@ class SourceHealthRegistry:
             entry.received_samples.append(received)
             entry.relevant_samples.append(relevant)
             if relevant > 0:
+                entry.successful_runs += 1
                 entry.last_success_at = time.time()
                 entry.consecutive_empty = 0
                 entry.consecutive_failures = 0
@@ -226,6 +234,8 @@ class SourceHealthRegistry:
                     entry.blocked = False
                 return
             entry.consecutive_empty += 1
+            if received > 0 and relevant <= 0:
+                entry.parsing_failures += 1
             if (
                 entry.consecutive_empty >= 2
                 and (network_elapsed or 0.0) >= EMPTY_SLOW_SECONDS
@@ -305,6 +315,12 @@ class SourceHealthRegistry:
                 result[name] = {
                     "env": _ENV,
                     "status": status,
+                    "health_state": (
+                        "COOLDOWN" if status in {STATUS_BLOCKED, STATUS_TEMP_UNAVAILABLE}
+                        else "HEALTHY" if entry.successful_runs >= 3
+                        else "DEGRADED" if entry.runs > 0
+                        else "EXPERIMENTAL"
+                    ),
                     "tier": tier,
                     "last_http_status": entry.last_http_status,
                     "last_success_at": entry.last_success_at,
@@ -314,6 +330,12 @@ class SourceHealthRegistry:
                     "consecutive_empty": entry.consecutive_empty,
                     "consecutive_failures": entry.consecutive_failures,
                     "runs": entry.runs,
+                    "successful_runs": entry.successful_runs,
+                    "failed_runs": entry.failed_runs,
+                    "success_rate": round(entry.successful_runs / max(1, entry.runs), 4),
+                    "results_rate": round(sum(entry.relevant_samples) / max(1, sum(entry.received_samples)), 4),
+                    "parsing_failures": entry.parsing_failures,
+                    "timeout_failures": entry.timeout_failures,
                     "network_p50_ms": _pct(entry.network_samples, 50),
                     "network_p95_ms": _pct(entry.network_samples, 95),
                     "queue_p50_ms": _pct(entry.queue_samples, 50),
@@ -322,6 +344,28 @@ class SourceHealthRegistry:
                     "relevant_recent": sum(entry.relevant_samples),
                 }
             return result
+
+    def summary(self, names=None):
+        snap = self.snapshot(names or list(self._entries))
+        states = [item.get("health_state") for item in snap.values()]
+        return {
+            "tracked": len(snap),
+            "healthy": states.count("HEALTHY"),
+            "degraded": states.count("DEGRADED"),
+            "cooldown": states.count("COOLDOWN"),
+            "experimental": states.count("EXPERIMENTAL"),
+            "successful_today": sum(1 for item in snap.values() if item.get("last_success_at") and time.time() - item["last_success_at"] < 86400),
+            "results_collected_recent": sum(int(item.get("relevant_recent") or 0) for item in snap.values()),
+            "avg_latency_ms": self.network_p50(),
+        }
+
+    def eligible_for_activation(self, name):
+        """True only after three real productive runs and no active cooldown."""
+        if self.in_cooldown(name):
+            return False
+        with self._lock:
+            entry = self._entries.get(str(name or "").strip())
+            return bool(entry and entry.successful_runs >= 3 and sum(entry.relevant_samples) > 0)
 
     def _global_pct(self, samples, q):
         with self._lock:

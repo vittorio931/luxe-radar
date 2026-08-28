@@ -1,4 +1,4 @@
-"""LUXE RADAR — Analytics learning (J1-J4).
+"""LUXE RADAR — anonymous analytics and bounded ranking signals.
 
 Collecte anonyme d'événements de recherche/interaction pour alimenter
 ultérieurement un ranking adaptatif (J5-J6, pas encore codé).
@@ -53,6 +53,7 @@ LEARN_BATCH_SIZE = 200
 LEARN_BUFFER_MAX = 4096
 LEARN_FLUSH_INTERVAL = 12.0
 LEARN_PURGE_INTERVAL = 3600.0
+LEARN_AGGREGATE_INTERVAL = 60.0
 LEARN_PURGE_BATCH = 500
 LEARN_RETENTION_DAYS = 30
 LEARN_MAX_EVENTS_PER_POST = 15
@@ -101,6 +102,22 @@ CREATE TABLE IF NOT EXISTS learn_events (
 );
 CREATE INDEX IF NOT EXISTS idx_learn_ts ON learn_events(ts DESC);
 CREATE INDEX IF NOT EXISTS idx_learn_query ON learn_events(query_key, ts DESC);
+CREATE TABLE IF NOT EXISTS learn_signals (
+    query_key TEXT NOT NULL,
+    marketplace TEXT NOT NULL DEFAULT '',
+    interactions INTEGER NOT NULL DEFAULT 0,
+    sessions INTEGER NOT NULL DEFAULT 0,
+    clicks INTEGER NOT NULL DEFAULT 0,
+    favorites INTEGER NOT NULL DEFAULT 0,
+    compares INTEGER NOT NULL DEFAULT 0,
+    bonus REAL NOT NULL DEFAULT 0,
+    updated_at REAL NOT NULL,
+    PRIMARY KEY(query_key, marketplace)
+);
+CREATE TABLE IF NOT EXISTS learn_meta (
+    key TEXT PRIMARY KEY,
+    value TEXT NOT NULL
+);
 """
 
 
@@ -273,8 +290,76 @@ def _learn_flush_batch() -> int:
     except Exception:
         pass
 
-    # Si on arrive ici, batch perdu — acceptable pour analytics
+    # Contention is temporary: preserve the batch for the next short cycle.
+    for event in reversed(batch):
+        if len(_learn_buffer) < LEARN_BUFFER_MAX:
+            _learn_buffer.appendleft(event)
     return 0
+
+
+_last_aggregate_ts = 0.0
+
+
+def _learn_aggregate() -> int:
+    """Recompute bounded signals from the retained window, outside HTTP work."""
+    global _last_aggregate_ts
+    cutoff = time.time() - LEARN_RETENTION_DAYS * 86400
+    try:
+        conn = _learn_conn()
+        try:
+            rows = conn.execute(
+                "SELECT query_key,marketplace,COUNT(*) interactions,"
+                "COUNT(DISTINCT session_id) sessions,"
+                "SUM(event_type IN ('result_click','marketplace_click')) clicks,"
+                "SUM(event_type='favorite') favorites,SUM(event_type='compare') compares "
+                "FROM learn_events WHERE ts>=? GROUP BY query_key,marketplace",
+                (cutoff,),
+            ).fetchall()
+            now = time.time()
+            values = []
+            for row in rows:
+                interactions, sessions = int(row[2]), int(row[3])
+                # No behavioral influence before enough independent evidence.
+                bonus = 0.0
+                if interactions >= 20 and sessions >= 5:
+                    positive = int(row[4] or 0) + 2 * int(row[5] or 0) + 2 * int(row[6] or 0)
+                    bonus = max(-2.0, min(2.0, 2.0 * positive / max(1, interactions)))
+                values.append((*row[:7], bonus, now))
+            conn.execute("BEGIN IMMEDIATE")
+            conn.execute("DELETE FROM learn_signals")
+            conn.executemany(
+                "INSERT INTO learn_signals(query_key,marketplace,interactions,sessions,clicks,favorites,compares,bonus,updated_at) "
+                "VALUES(?,?,?,?,?,?,?,?,?)", values,
+            )
+            conn.execute(
+                "INSERT INTO learn_meta(key,value) VALUES('last_aggregation',?) "
+                "ON CONFLICT(key) DO UPDATE SET value=excluded.value", (str(now),),
+            )
+            conn.commit()
+            _last_aggregate_ts = now
+            return len(values)
+        finally:
+            conn.close()
+    except Exception:
+        return 0
+
+
+def learning_status() -> dict:
+    status = learn_drop_stats()
+    status.update({"enabled": LEARN_ENABLED, "queries_learned": 0, "last_aggregation": None})
+    try:
+        conn = _learn_conn()
+        try:
+            status["queries_learned"] = int(conn.execute(
+                "SELECT COUNT(DISTINCT query_key) FROM learn_signals WHERE bonus!=0"
+            ).fetchone()[0])
+            row = conn.execute("SELECT value FROM learn_meta WHERE key='last_aggregation'").fetchone()
+            status["last_aggregation"] = float(row[0]) if row else None
+        finally:
+            conn.close()
+    except Exception:
+        pass
+    return status
 
 
 # ---------------------------------------------------------------------------
@@ -354,5 +439,7 @@ def _learn_flush_loop() -> None:
     while True:
         time.sleep(LEARN_FLUSH_INTERVAL)
         _learn_flush_batch()
+        if time.time() - _last_aggregate_ts > LEARN_AGGREGATE_INTERVAL:
+            _learn_aggregate()
         if time.time() - _last_purge_ts > LEARN_PURGE_INTERVAL:
             _learn_purge_old()

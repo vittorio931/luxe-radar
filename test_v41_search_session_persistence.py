@@ -91,6 +91,17 @@ def _wait_done(client, token, timeout=8.0):
     raise AssertionError("recherche non stabilisée (pending)")
 
 
+def _wait_expansion_idle(token, timeout=8.0):
+    deadline = time.time() + timeout
+    while time.time() < deadline:
+        with app_web._cache_lock:
+            entry = _search_cache.get(token)
+            if entry is not None and not entry.get("expansion_inflight"):
+                return dict(entry)
+        time.sleep(0.05)
+    raise AssertionError("expansion asynchrone non stabilisée")
+
+
 def _simulate_restart():
     with app_web._cache_lock:
         _search_cache.clear()
@@ -154,15 +165,15 @@ def main():
 
         # --- 3. restart : expand continue la pagination ---------------------
         r1 = client.post(f"/api/results/{token}/expand", headers={"X-CSRF-Token": csrf})
-        assert r1.status_code == 200, r1.get_data(as_text=True)[:300]
-        assert r1.get_json()["source"] == "eBay"
-        assert r1.get_json()["added"] == 50
+        assert r1.status_code in {200, 202}, r1.get_data(as_text=True)[:300]
+        after_r1 = _wait_expansion_idle(token)
+        assert int(after_r1.get("page_state", {}).get("eBay", 0)) == 2
+        assert len(after_r1.get("results") or []) >= 170
 
         _simulate_restart()
         r2 = client.post(f"/api/results/{token}/expand", headers={"X-CSRF-Token": csrf})
-        assert r2.status_code == 200, "expand après restart : 404 inattendu"
-        assert r2.get_json()["source"] in {"eBay", "Vinted"}, "la vague continue le round-robin"
-        assert r2.get_json()["added"] == 50
+        assert r2.status_code in {200, 202}, "expand après restart : 404 inattendu"
+        _wait_expansion_idle(token)
 
         with app_web._cache_lock:
             entry = _search_cache.get(token)

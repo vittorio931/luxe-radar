@@ -6,7 +6,7 @@ js=(root/'static/app.js').read_text(encoding='utf-8')
 app=(root/'app_web.py').read_text(encoding='utf-8')
 sw=(root/'static/sw.js').read_text(encoding='utf-8')
 assert 'APP_VERSION = "3.8.1"' in app
-assert 'ASSET_VERSION = "20260822-381"' in app
+assert 'ASSET_VERSION = "20260825-382"' in app
 assert 'luxe-radar-shell-v371' in sw
 for token in ['market-header','global-search-form','home-search-form','Recherches populaires','Comparer les prix','Alertes prix','home-recent-searches','category-grid','source-drawer']:
     assert token in html, token

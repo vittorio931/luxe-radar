@@ -6,6 +6,7 @@ import os
 import re
 import subprocess
 import sys
+from unittest.mock import patch
 
 from PIL import Image
 
@@ -100,9 +101,11 @@ def main():
     }).get_data(as_text=True)
     assert "Enter a product, brand or reference." in english_error
     xss_payload = '<img src=x onerror=alert(1)>'
-    escaped_search = client.post("/", data={
-        "csrf_token": csrf, "language": "fr", "marque": xss_payload, "prix": "", "plateforme": "Toutes",
-    }).get_data(as_text=True)
+    # Le test d'échappement ne doit jamais lancer les 27 connecteurs réels.
+    with patch("app_web._progressive_source_order", return_value=[]):
+        escaped_search = client.post("/", data={
+            "csrf_token": csrf, "language": "fr", "marque": xss_payload, "prix": "", "plateforme": "Toutes",
+        }).get_data(as_text=True)
     assert xss_payload not in escaped_search and "&lt;img src=x onerror=alert(1)&gt;" in escaped_search
     assert client.get("/", headers={"Host": "attacker.invalid"}).status_code == 400
     assert client.get("/", headers={"Host": "localhost.:5000"}).status_code == 200

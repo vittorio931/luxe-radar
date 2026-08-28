@@ -3,7 +3,7 @@ root=Path(__file__).resolve().parent
 app=(root/'app_web.py').read_text(encoding='utf-8')
 js=(root/'static'/'app.js').read_text(encoding='utf-8')
 html=(root/'templates'/'index.html').read_text(encoding='utf-8')
-assert 'APP_VERSION = "3.7.0"' in app
+assert 'APP_VERSION = "3.8.1"' in app
 assert 'identity = request.args.get("identity", "confirmed")' in app
 assert 'identity="confirmed"' in app and 'owner=session.get("csrf_token")' in app
 assert "identity:$('#identity-filter')?.value||'confirmed'" in js

@@ -34,6 +34,7 @@ BRAND_ALIASES = {
     "gucci": ("gucci",),
     "prada": ("prada",),
     "dior": ("dior",),
+    "louis vuitton": ("louis vuitton", "lv"),
     "balenciaga": ("balenciaga",),
     "versace": ("versace",),
     "burberry": ("burberry",),
