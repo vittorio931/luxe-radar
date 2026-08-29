@@ -21,6 +21,17 @@ def main():
             assert len(search.results) == 50
             nike_trail = index_engine.search("Nike Trail", limit=50, path=target)
             assert nike_trail.total >= 1000, nike_trail.total
+            live_offer = {
+                "marketplace": "eBay", "titre": "Marque Rare modèle instantané",
+                "prix": 123, "score": 90, "score_confiance": 80,
+                "niveau_identite": "fort", "score_identite": 95,
+                "lien": "https://example.test/marque-rare-instantanee",
+            }
+            assert index_engine.upsert_results([live_offer], "Marque Rare", path=target) == 1
+            first = index_engine.search("Marque Rare", limit=50, path=target)
+            second = index_engine.search("Marque Rare", limit=50, path=target)
+            assert first.total >= 1 and second.total == first.total
+            assert first.results[0]["lien"] == second.results[0]["lien"]
         finally:
             bootstrap_index._DONE = old_done
     print("OK - bootstrap public Balenciaga 1000+ restauré sur une base vide.")

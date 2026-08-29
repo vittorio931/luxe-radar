@@ -511,9 +511,9 @@ SEARCH_RESULT_LIMIT = _bounded_env_int(
     10000,
 )
 if IS_RENDER_RUNTIME and bootstrap_index.SNAPSHOT.exists():
-    # Le catalogue préchargé est lu depuis SQLite et paginé par lots ; ce
-    # plafond autorise les 1 352 Balenciaga sans lancer de collecte lourde.
-    SEARCH_RESULT_LIMIT = max(2000, SEARCH_RESULT_LIMIT)
+    # Le catalogue préchargé est lu depuis SQLite et paginé par lots ; 5 000
+    # est un plafond de navigation, jamais un chargement RAM monolithique.
+    SEARCH_RESULT_LIMIT = max(5000, SEARCH_RESULT_LIMIT)
 INDEX_TOKEN_CACHE_LIMIT = min(
     SEARCH_RESULT_LIMIT,
     250 if IS_RENDER_RUNTIME and bootstrap_index.SNAPSHOT.exists() else SEARCH_RESULT_LIMIT,
@@ -528,6 +528,10 @@ MAX_CACHED_SEARCHES = _bounded_env_int(
     3,
     30,
 )
+if IS_RENDER_RUNTIME:
+    # L'index SQLite est le cache durable de l'instance. Trois tokens RAM
+    # suffisent pour A -> B -> A et bornent fortement les pics mémoire.
+    MAX_CACHED_SEARCHES = min(MAX_CACHED_SEARCHES, 3)
 # V4.1 : les tokens de recherche survivent aux restarts Gunicorn via SQLite.
 # 30 à 60 minutes, nettoyés périodiquement en arrière-plan du cache RAM.
 SEARCH_SESSION_TTL_SECONDS = _bounded_env_int(
