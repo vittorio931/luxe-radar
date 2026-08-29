@@ -14,6 +14,27 @@ _LOCK = Lock()
 _DONE = False
 
 
+def _target_counts(target: Path) -> dict:
+    if not target.exists() or target.stat().st_size <= 0:
+        return {"exact": 0, "catalog": 0, "catalog_total": 0, "columbia_exact": 0}
+    counts = index_engine.count_query_offers("Balenciaga", path=target)
+    counts["columbia_exact"] = index_engine.count_query_offers(
+        "pantalon Columbia", path=target
+    )["exact"]
+    return counts
+
+
+def _target_is_current(counts: dict) -> bool:
+    # Ces seuils décrivent le snapshot public actuellement livré. Ils évitent
+    # qu'un disque Render encore « chaud », mais issu du snapshot précédent,
+    # empêche l'import de la nouvelle couverture Columbia.
+    return (
+        counts.get("exact", 0) >= 1000
+        and counts.get("catalog_total", 0) >= 10000
+        and counts.get("columbia_exact", 0) >= 200
+    )
+
+
 def ensure_bootstrap_index(*, path=None) -> dict:
     global _DONE
     if not SNAPSHOT.exists() or not index_engine.index_enabled():
@@ -23,21 +44,13 @@ def ensure_bootstrap_index(*, path=None) -> dict:
     # peut remplacer/perdre son disque éphémère après un crash sans recréer le
     # processus Python de la manière attendue. Revalider le contenu réel.
     if _DONE:
-        counts = (
-            index_engine.count_query_offers("Balenciaga", path=target)
-            if target.exists() and target.stat().st_size > 0
-            else {"exact": 0, "catalog": 0, "catalog_total": 0}
-        )
-        if counts["exact"] >= 1000 and counts["catalog_total"] >= 10000:
+        counts = _target_counts(target)
+        if _target_is_current(counts):
             return {"loaded": False, "reason": "ready", **counts}
         _DONE = False
     with _LOCK:
-        counts = (
-            index_engine.count_query_offers("Balenciaga", path=target)
-            if target.exists() and target.stat().st_size > 0
-            else {"exact": 0, "catalog": 0, "catalog_total": 0}
-        )
-        if counts["exact"] >= 1000 and counts["catalog_total"] >= 10000:
+        counts = _target_counts(target)
+        if _target_is_current(counts):
             _DONE = True
             return {"loaded": False, "reason": "already_warm", **counts}
         target.parent.mkdir(parents=True, exist_ok=True)
@@ -49,7 +62,7 @@ def ensure_bootstrap_index(*, path=None) -> dict:
         finally:
             temporary.unlink(missing_ok=True)
         _DONE = True
-        final = index_engine.count_query_offers("Balenciaga", path=target)
+        final = _target_counts(target)
         return {"loaded": True, "imported": final["catalog_total"], **final}
 
 

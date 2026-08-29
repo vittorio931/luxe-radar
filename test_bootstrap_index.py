@@ -24,6 +24,9 @@ def main():
             moncler = index_engine.search("Moncler", limit=50, path=target)
             assert moncler.total >= 2000, moncler.total
             assert {item["marketplace"] for item in moncler.results} & {"SSENSE", "The Outnet", "eBay"}
+            columbia = index_engine.search("pantalon Columbia", limit=50, path=target)
+            assert columbia.total >= 200, columbia.total
+            assert all("columbia" in str(item.get("titre") or "").casefold() for item in columbia.results)
             live_offer = {
                 "marketplace": "eBay", "titre": "Marque Rare modèle instantané",
                 "prix": 123, "score": 90, "score_confiance": 80,
