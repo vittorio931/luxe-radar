@@ -154,8 +154,12 @@ def _is_render_runtime() -> bool:
 # Le collecteur profond partage actuellement le petit processus web. Il reste
 # donc explicitement opt-in : l'activer implicitement sur Render peut épuiser
 # le worker pendant qu'une deuxième recherche progressive démarre.
+def _collector_enabled() -> bool:
+    return _env_bool("LUXE_RADAR_COLLECTOR_ENABLED", True) and not _is_render_runtime()
+
+
 COLLECTOR_ON_DEMAND_MODE = _env_bool("LUXE_RADAR_COLLECTOR_ON_DEMAND_MODE", False)
-COLLECTOR_ENABLED = _env_bool("LUXE_RADAR_COLLECTOR_ENABLED", True)
+COLLECTOR_ENABLED = _collector_enabled()
 COLLECTOR_STARTUP_SEEDS_ENABLED = (
     _env_bool("LUXE_RADAR_COLLECTOR_STARTUP_SEEDS_ENABLED", True)
     and not COLLECTOR_ON_DEMAND_MODE

@@ -17,6 +17,12 @@ class CollectorProductionModeTests(unittest.TestCase):
         with patch.dict(os.environ, {}, clear=True):
             self.assertFalse(collector._is_render_runtime())
 
+    def test_web_collector_stays_disabled_on_render_even_with_stale_true_env(self):
+        with patch.dict(os.environ, {
+            "RENDER": "true", "LUXE_RADAR_COLLECTOR_ENABLED": "true"
+        }, clear=True):
+            self.assertFalse(collector._collector_enabled())
+
     def test_allowed_sources_excludes_browser_connectors(self):
         available = {
             "eBay": _Connector("eBay"),
