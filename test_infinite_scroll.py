@@ -48,6 +48,8 @@ def main():
     assert "pendingResultReset=true;loadEpoch++" in app_js
     assert "renderedBefore>authoritativeTotal" in app_js
     assert "start>authoritativeTotal" in app_js
+    assert "hasUnrendered=Number(d.total||0)>visibleResults.length" in app_js
+    assert "(genChanged||hasUnrendered)" in app_js
     assert "await expandSearch()" not in app_js
     assert "expandSearch().then(()=>scheduleAutoLoad(220))" in app_js
     assert _safe_number(float("nan"), 7) == 7

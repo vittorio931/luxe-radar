@@ -400,8 +400,8 @@ if(r.status===404){if(recoverSearchSession())return;progressivePending=false;exp
 if(!r.ok)throw new Error('status');
 const d=await r.json(),g=Number(d.generation||0),status=$('#load-status');
 progressivePending=Boolean(d.pending);expansionExhausted=Boolean(d.expansion_exhausted);updateSourceCoverage(d);
-const genChanged=g>progressiveGeneration;progressiveGeneration=g;refreshPending=false;
-if(genChanged&&!hasMore&&(sentinelNearViewport()||offset===0))scheduleAutoLoad(progressivePending?1400:700);
+const genChanged=g>progressiveGeneration,hasUnrendered=Number(d.total||0)>visibleResults.length;progressiveGeneration=g;refreshPending=false;
+if((genChanged||hasUnrendered)&&!hasMore&&(sentinelNearViewport()||offset===0))scheduleAutoLoad(progressivePending?1400:700);
 if(status&&!loading){const pending=(d.pending_sources||[]).join(', '),hidden=Number(d.identity_counts?.rejet||0),identityMode=$('#identity-filter')?.value||'confirmed',hiddenText=(identityMode==='confirmed'||identityMode==='strong')&&hidden>0?tr(` · ${hidden} à vérifier masqués`,` · ${hidden} needs-review hidden`):'';status.textContent=progressivePending?tr(`${d.total} annonces collectées — ${pending||'sources lentes'} en cours…`,`${d.total} listings collected — ${pending||'slower sources'} still running…`):(hasMore?tr('Recherche complète — continues de descendre pour charger la suite.','Full search — keep scrolling to load more.'):(expansionExhausted?tr(`Recherche complète — ${d.total} annonces collectées${hiddenText}. Tous les résultats disponibles ont été chargés.`,`Full search — ${d.total} listings collected${hiddenText}. All available results have been loaded.`):tr('D’autres sources travaillent encore — la suite arrive automatiquement.','More sources are still working — more results will load automatically.')))}
 if(!hasMore&&(progressivePending||!expansionExhausted)&&sentinelNearViewport())scheduleAutoLoad(progressivePending?1400:700)
 }
