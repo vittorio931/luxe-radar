@@ -27,6 +27,22 @@ def main():
             columbia = index_engine.search("pantalon Columbia", limit=50, path=target)
             assert columbia.total >= 200, columbia.total
             assert all("columbia" in str(item.get("titre") or "").casefold() for item in columbia.results)
+            tech_wind_offer = {
+                "marketplace": "eBay", "titre": "Columbia Tech Wind jacket",
+                "prix": 80, "score": 90, "score_confiance": 90,
+                "niveau_identite": "fort", "score_identite": 95,
+                "lien": "https://example.test/columbia-tech-wind",
+            }
+            index_engine.upsert_results([tech_wind_offer], "Columbia", path=target)
+            broad_columbia = index_engine.search("Columbia", limit=50, path=target)
+            refined_columbia = index_engine.search("Columbia Tech Wind", limit=50, path=target)
+            assert 0 < refined_columbia.total < broad_columbia.total
+            assert any(item.get("lien") == tech_wind_offer["lien"] for item in refined_columbia.results)
+            assert all(
+                "tech" in str(item.get("titre") or "").casefold()
+                and "wind" in str(item.get("titre") or "").casefold()
+                for item in refined_columbia.results
+            )
             live_offer = {
                 "marketplace": "eBay", "titre": "Marque Rare modèle instantané",
                 "prix": 123, "score": 90, "score_confiance": 80,

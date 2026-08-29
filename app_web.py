@@ -590,6 +590,49 @@ _RENDER_HTTP_SEARCH_SOURCES = frozenset({"eBay", "SSENSE", "The Outnet"})
 def _render_snapshot_mode():
     return bool(IS_RENDER_RUNTIME and bootstrap_index.SNAPSHOT.exists())
 
+
+def _render_live_ebay_results(query, price):
+    """Fallback HTTP borné avec relâchement contrôlé d'un modèle libre.
+
+    Une expression non normalisée telle que « Columbia Tech Wind » peut être
+    absente mot pour mot alors que Columbia Tech et Columbia Wind existent.
+    On garde toujours la marque et au moins un terme distinctif ; une référence
+    alphanumérique/SKU n'est jamais relâchée.
+    """
+    query = str(query or "").strip()
+    queries = [query]
+    info = understand_query(query)
+    brand = str(getattr(info, "brand", "") or "").strip() if info else ""
+    product_type = getattr(info, "product_type", None) if info else None
+    model = str(getattr(info, "model", "") or "").strip() if info else ""
+    folded_brand = set(index_engine.canonical_query(brand).split())
+    residual = [
+        token for token in index_engine.canonical_query(query).split()
+        if token not in folded_brand
+    ]
+    if (
+        brand and not product_type and not model and len(residual) >= 2
+        and all(token.isalpha() for token in residual)
+    ):
+        queries.extend(f"{brand} {token}" for token in residual[:3])
+
+    merged = {}
+    for position, candidate_query in enumerate(dict.fromkeys(queries)):
+        additions = rechercher_multi_marketplaces(
+            marque=candidate_query,
+            prix_max=price,
+            plateformes=["eBay"],
+            limite=min(200, SEARCH_RESULT_LIMIT),
+        )
+        for item in additions or []:
+            key = _cle_unique_multi(item)
+            if key not in merged:
+                merged[key] = dict(item, _relaxed_query_position=position)
+        # Une correspondance exacte productive n'a pas besoin d'être élargie.
+        if position == 0 and len(merged) >= 20:
+            break
+    return list(merged.values())[:min(250, SEARCH_RESULT_LIMIT)]
+
 def _rotating_luxury_query() -> str:
     import time as _time
     return _LUXURY_UNIVERSE_QUERIES[int(_time.strftime("%j")) % len(_LUXURY_UNIVERSE_QUERIES)]
@@ -2824,12 +2867,7 @@ def _run_radar_search(recherche, prix_saisi, selected_platform, reference_saisie
                     and indexed.total == 0
                     and state["selected_platform"] in {"Toutes", "eBay"}
                 ):
-                    live_results = rechercher_multi_marketplaces(
-                        marque=connector_query,
-                        prix_max=prix,
-                        plateformes=["eBay"],
-                        limite=min(200, SEARCH_RESULT_LIMIT),
-                    )
+                    live_results = _render_live_ebay_results(connector_query, prix)
                     if live_results:
                         indexed_results = list(live_results)
                         indexed = index_engine.IndexSearch(

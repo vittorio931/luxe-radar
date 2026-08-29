@@ -1315,6 +1315,15 @@ def _fts_terms(query: str) -> list[str]:
             required = _fold(brand).split()
             if model:
                 required.extend(_fold(model).split())
+            elif not getattr(info, "product_type", None):
+                # Les modèles libres que le dictionnaire ne connaît pas encore
+                # (ex. « Columbia Tech Wind ») doivent tout de même raffiner la
+                # marque. Avant ce garde-fou, comprendre Columbia suffisait et
+                # les mots Tech/Wind étaient supprimés : la requête renvoyait
+                # exactement les mêmes milliers de lignes que « Columbia ».
+                brand_tokens = set(_fold(brand).split())
+                residual = [token for token in tokens if token not in brand_tokens]
+                required.extend(residual)
             # Recherche par famille : les pantalons Nike Trail peuvent être
             # publiés sous ACG, Dawn Range, Phenom Elite ou Storm-FIT sans le
             # mot « trail ». Récupérer le catalogue Nike, puis laisser le gate

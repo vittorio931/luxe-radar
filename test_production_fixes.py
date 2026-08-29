@@ -11,6 +11,7 @@ Couvre :
   H — lifecycle preload safety (wsgi.py ne lance pas de workers)
   I — Render snapshot bloque les expansions lourdes entre deux recherches
   J — index absent : eBay fournit des résultats dès le premier rendu
+  K — modèle libre absent : repli marque + chaque terme distinctif
 """
 from __future__ import annotations
 
@@ -380,6 +381,23 @@ def test_render_cold_query_has_immediate_results():
     _check("J3_cold_query_initial_nonzero", count == 1, f"count={count}")
 
 
+def test_free_model_query_relaxes_without_losing_brand():
+    import app_web
+
+    tech = {"marketplace": "eBay", "titre": "Columbia Omni Tech veste", "lien": "https://example.test/tech"}
+    wind = {"marketplace": "eBay", "titre": "Columbia Wind veste", "lien": "https://example.test/wind"}
+    with patch.object(
+        app_web, "rechercher_multi_marketplaces",
+        side_effect=[[], [tech], [wind]],
+    ) as search:
+        results = app_web._render_live_ebay_results("Columbia Tech Wind", 500)
+    queries = [call.kwargs.get("marque") for call in search.call_args_list]
+    _check("K1_relaxed_queries_keep_brand",
+           queries == ["Columbia Tech Wind", "Columbia tech", "Columbia wind"],
+           f"queries={queries}")
+    _check("K2_relaxed_results_are_merged", len(results) == 2)
+
+
 # ============================================================
 # Main
 # ============================================================
@@ -394,6 +412,7 @@ ALL_TESTS = [
     test_wsgi_bare_exposure,
     test_render_snapshot_expansion_guard,
     test_render_cold_query_has_immediate_results,
+    test_free_model_query_relaxes_without_losing_brand,
 ]
 
 
