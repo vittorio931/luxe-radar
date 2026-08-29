@@ -1307,6 +1307,29 @@ def _merge_progressive_results(existing, additions):
     return ranked
 
 
+_INDEX_COVERAGE_SOURCES = ("Vinted", "Grailed", "SSENSE", "Zalando", "The Outnet")
+
+
+def _supplement_index_marketplaces(query, results, *, price_max=None):
+    """Ajoute quelques offres indexées de sources minoritaires au premier cache.
+
+    Cinq petites lectures SQLite, aucun réseau. Cela empêche le top 250 en RAM
+    d'exclure entièrement Vinted/Grailed/etc. lorsque eBay possède 900+ offres.
+    """
+    merged = list(results or [])
+    for source in _INDEX_COVERAGE_SOURCES:
+        try:
+            sample = index_engine.search(
+                query, price_max=price_max, marketplace=source,
+                identity="all", limit=5,
+            )
+            if sample.results:
+                merged = _merge_progressive_results(merged, sample.results)
+        except Exception:
+            continue
+    return merged
+
+
 def _append_expansion_results(existing, additions):
     """Ajoute une vague d'infinite-scroll sans déplacer les cartes déjà vues.
 
@@ -2763,7 +2786,13 @@ def _run_radar_search(recherche, prix_saisi, selected_platform, reference_saisie
                         identity="all",
                         limit=min(index_engine.query_limit(), INDEX_TOKEN_CACHE_LIMIT),
                     ) if index_engine.index_enabled() else index_engine.IndexSearch([], 0, None, "")
-                indexed_results = _rank_by_reference(indexed.results, reference_saisie, state["reference_stricte"])
+                indexed_results = list(indexed.results)
+                if IS_RENDER_RUNTIME and state["selected_platform"] == "Toutes" and indexed.total >= 100:
+                    indexed_results = _supplement_index_marketplaces(
+                        connector_query, indexed_results,
+                        price_max=(prix if prix_saisi else None),
+                    )
+                indexed_results = _rank_by_reference(indexed_results, reference_saisie, state["reference_stricte"])
                 indexed_confirmed = _sorted_results(indexed_results, identity="confirmed")
                 state["index_hit_count"] = len(indexed_confirmed)
                 state["index_age_seconds"] = indexed.age_seconds

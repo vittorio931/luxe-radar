@@ -127,6 +127,22 @@ def main():
     assert deep_urls_1.isdisjoint(deep_urls_2)
     assert deep_page_1["total"] == deep_page_2["total"] == 350
 
+    def fake_coverage(_query, **kwargs):
+        source = kwargs["marketplace"]
+        item = {
+            "marketplace": source, "titre": f"Sac {source}", "prix": 100,
+            "score": 50, "score_confiance": 70, "niveau_identite": "possible",
+            "lien": f"https://coverage.example/{source.casefold().replace(' ', '-')}",
+        }
+        return index_engine.IndexSearch([item], 1, 0.0, "sac louis vuitton")
+
+    with patch.object(index_engine, "search", side_effect=fake_coverage):
+        covered = app_web._supplement_index_marketplaces(
+            "sac Louis Vuitton", [deep_results[0]],
+        )
+    covered_sources = {item["marketplace"] for item in covered}
+    assert {"eBay", "Vinted", "Grailed", "SSENSE", "Zalando", "The Outnet"} <= covered_sources
+
     client = app.test_client()
     client.get("/")
     with client.session_transaction() as browser_session:
