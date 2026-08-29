@@ -29,7 +29,7 @@ services:
       - key: LUXE_RADAR_MAX_CACHED_SEARCHES
         value: "8"
       - key: LUXE_RADAR_PROGRESSIVE_WORKERS
-        value: "8"
+        value: "4"
       # Sources dont le benchmark prod a prouvé le blocage (403/429/challenge)
       # pour l'egress datacenter : omises des vagues dès le démarrage pour ne
       # pas re-payer la taxe froide à chaque déploiement. Données réelles,
