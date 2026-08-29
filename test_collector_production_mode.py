@@ -11,6 +11,12 @@ class _Connector:
 
 
 class CollectorProductionModeTests(unittest.TestCase):
+    def test_render_runtime_detection(self):
+        with patch.dict(os.environ, {"RENDER_SERVICE_ID": "srv-test"}, clear=True):
+            self.assertTrue(collector._is_render_runtime())
+        with patch.dict(os.environ, {}, clear=True):
+            self.assertFalse(collector._is_render_runtime())
+
     def test_allowed_sources_excludes_browser_connectors(self):
         available = {
             "eBay": _Connector("eBay"),

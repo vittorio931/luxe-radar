@@ -143,20 +143,39 @@ def _env_float(name: str, default: float, minimum: float, maximum: float) -> flo
     return max(minimum, min(value, maximum))
 
 
-COLLECTOR_ENABLED = _env_bool("LUXE_RADAR_COLLECTOR_ENABLED", True)
-COLLECTOR_STARTUP_SEEDS_ENABLED = _env_bool("LUXE_RADAR_COLLECTOR_STARTUP_SEEDS_ENABLED", True)
+def _is_render_runtime() -> bool:
+    return bool(
+        os.environ.get("RENDER")
+        or os.environ.get("RENDER_SERVICE_ID")
+        or os.environ.get("RENDER_EXTERNAL_HOSTNAME")
+    )
+
+
+# Render peut conserver une ancienne variable de tableau de bord qui prime sur
+# render.yaml. Le mode à la demande reste sûr : aucun seed au démarrage et une
+# allowlist HTTP seulement. Il est donc activé directement sur ce runtime.
+COLLECTOR_ON_DEMAND_MODE = _is_render_runtime()
+COLLECTOR_ENABLED = _env_bool("LUXE_RADAR_COLLECTOR_ENABLED", True) or COLLECTOR_ON_DEMAND_MODE
+COLLECTOR_STARTUP_SEEDS_ENABLED = (
+    _env_bool("LUXE_RADAR_COLLECTOR_STARTUP_SEEDS_ENABLED", True)
+    and not COLLECTOR_ON_DEMAND_MODE
+)
 COLLECTOR_FRESHNESS_SECONDS = _env_int("LUXE_RADAR_COLLECTOR_FRESHNESS_SECONDS", 24 * 60 * 60, 300, 30 * 24 * 60 * 60)
 COLLECTOR_SLEEP_SECONDS = _env_float("LUXE_RADAR_COLLECTOR_SLEEP_SECONDS", 5.0, 1.0, 300.0)
 COLLECTOR_PAGE_DELAY_SECONDS = _env_float("LUXE_RADAR_COLLECTOR_PAGE_DELAY_SECONDS", 0.3, 0.0, 60.0)
 COLLECTOR_EMPTY_PAGES = _env_int("LUXE_RADAR_COLLECTOR_EMPTY_PAGES", 0, 0, 20)
-COLLECTOR_SEED_BUDGET_SECONDS = _env_float("LUXE_RADAR_COLLECTOR_SEED_BUDGET_SECONDS", 300.0, 30.0, 3600.0)
-COLLECTOR_IDLE_SECONDS = _env_float("LUXE_RADAR_COLLECTOR_IDLE_SECONDS", 60.0, 10.0, 3600.0)
+COLLECTOR_SEED_BUDGET_SECONDS = _env_float(
+    "LUXE_RADAR_COLLECTOR_SEED_BUDGET_SECONDS", 120.0 if COLLECTOR_ON_DEMAND_MODE else 300.0, 30.0, 3600.0)
+COLLECTOR_IDLE_SECONDS = _env_float(
+    "LUXE_RADAR_COLLECTOR_IDLE_SECONDS", 10.0 if COLLECTOR_ON_DEMAND_MODE else 60.0, 10.0, 3600.0)
 COLLECTOR_TRIGGER_WINDOW_SECONDS = _env_int("LUXE_RADAR_COLLECTOR_TRIGGER_WINDOW_SECONDS", 300, 30, 86400)
 
 
 def _allowed_source_names() -> set[str]:
     """Allowlist optionnelle, surtout utile sur les petits workers web."""
     raw = os.environ.get("LUXE_RADAR_COLLECTOR_ALLOWED_SOURCES") or ""
+    if not raw and COLLECTOR_ON_DEMAND_MODE:
+        raw = "eBay,SSENSE,The Outnet"
     return {name.strip().casefold() for name in raw.split(",") if name.strip()}
 
 

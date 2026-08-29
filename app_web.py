@@ -509,6 +509,11 @@ SEARCH_RESULT_LIMIT = _bounded_env_int(
     500,
     10000,
 )
+if IS_RENDER_RUNTIME:
+    # Une ancienne valeur Render (500) peut primer sur render.yaml. Les offres
+    # sont toujours chargées par lots de 50 : ce plafond augmente la profondeur,
+    # pas la taille de la réponse initiale.
+    SEARCH_RESULT_LIMIT = max(2000, SEARCH_RESULT_LIMIT)
 DIVERSIFIED_HEAD_SIZE = 200
 MAX_BATCH_SIZE = 500
 IMAGE_COMPARE_LIMIT = _bounded_env_int("LUXE_RADAR_IMAGE_COMPARE_LIMIT", 64, 16, 120)
