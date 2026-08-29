@@ -25,7 +25,9 @@ services:
       - key: LUXE_RADAR_MULTI_TIMEOUT
         value: "8"
       - key: LUXE_RADAR_SEARCH_RESULT_LIMIT
-        value: "500"
+        value: "2000"
+      - key: LUXE_RADAR_INDEX_MAX_AGE_MINUTES
+        value: "10080"
       - key: LUXE_RADAR_MAX_CACHED_SEARCHES
         value: "8"
       - key: LUXE_RADAR_PROGRESSIVE_WORKERS

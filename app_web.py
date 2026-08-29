@@ -27,6 +27,7 @@ except Exception:
     pass
 
 import billing_stripe
+import bootstrap_index
 import collector
 import index_engine
 import learn
@@ -509,6 +510,10 @@ SEARCH_RESULT_LIMIT = _bounded_env_int(
     500,
     10000,
 )
+if IS_RENDER_RUNTIME and bootstrap_index.SNAPSHOT.exists():
+    # Le catalogue préchargé est lu depuis SQLite et paginé par lots ; ce
+    # plafond autorise les 1 352 Balenciaga sans lancer de collecte lourde.
+    SEARCH_RESULT_LIMIT = max(2000, SEARCH_RESULT_LIMIT)
 DIVERSIFIED_HEAD_SIZE = 200
 MAX_BATCH_SIZE = 500
 IMAGE_COMPARE_LIMIT = _bounded_env_int("LUXE_RADAR_IMAGE_COMPARE_LIMIT", 64, 16, 120)
@@ -974,6 +979,12 @@ def _persist_search_session(entry, token, owner):
     """Programme l'upsert SQLite sans bloquer le premier rendu ni le scroll."""
     if not token:
         return
+    try:
+        # < 1 s avec l'instantané SQLite compressé. Terminer avant learning et
+        # les requêtes évite qu'une connexion lise le fichier pendant os.replace.
+        bootstrap_index.ensure_bootstrap_index()
+    except Exception:  # pragma: no cover - la première recherche réessaiera
+        pass
     try:
         payload = _search_session_payload(entry, token, owner)
         # Les petits états coûtent quelques millisecondes et restent synchrones:
@@ -2713,6 +2724,7 @@ def _run_radar_search(recherche, prix_saisi, selected_platform, reference_saisie
 
     if recherche:
         try:
+            bootstrap_index.ensure_bootstrap_index()
             prix = float(prix_saisi) if prix_saisi else 1_000_000.0
             if not (0 < prix <= 1_000_000):
                 state["erreur"] = _message("price_range")
