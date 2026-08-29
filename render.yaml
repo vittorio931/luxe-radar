@@ -29,7 +29,7 @@ services:
       - key: LUXE_RADAR_MAX_CACHED_SEARCHES
         value: "8"
       - key: LUXE_RADAR_PROGRESSIVE_WORKERS
-        value: "4"
+        value: "2"
       # Sources dont le benchmark prod a prouvé le blocage (403/429/challenge)
       # pour l'egress datacenter : omises des vagues dès le démarrage pour ne
       # pas re-payer la taxe froide à chaque déploiement. Données réelles,
@@ -48,7 +48,7 @@ services:
       # Réindexe les seeds populaires page par page dès le démarrage et après
       # les vagues déclenchées par les utilisateurs qui approchent de la fin.
       - key: LUXE_RADAR_COLLECTOR_ENABLED
-        value: "true"
+        value: "false"
       - key: LUXE_RADAR_COLLECTOR_SEEDS
         value: '[["Nike P-6000",250],["Nike Trail",250],["Nike",250],["On Cloud 5",250],["On Cloudmonster",250],["On",250],["Stone Island",300],["Adidas Samba",200],["New Balance 2002R",250],["Salomon XT-6",250]]'
       - key: LUXE_RADAR_COLLECTOR_FRESHNESS_SECONDS
