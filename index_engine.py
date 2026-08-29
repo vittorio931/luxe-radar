@@ -1451,8 +1451,8 @@ def _python_sort(items: list[dict], sort: str, query: str, learning_scores: dict
     if sort == "confidence":
         return sorted(items, key=lambda item: (-_safe_float(item.get("score_confiance"), 0), -rank(item), *_final_tiebreak(item)))
     return sorted(items, key=lambda item: (
-        1 if item.get("offer_state") == "STALE" else 0,
         _brand_domain_rank(item, q_key),
+        1 if item.get("offer_state") == "STALE" else 0,
         identity_order.get(_identity_level(item), 1),
         -(rank(item) + max(-2.0, min(2.0, _safe_float(
             learning_scores.get(str(item.get("marketplace") or ""), learning_scores.get("", 0.0)), 0.0
