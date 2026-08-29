@@ -16,13 +16,27 @@ _DONE = False
 
 def ensure_bootstrap_index(*, path=None) -> dict:
     global _DONE
-    if _DONE or not SNAPSHOT.exists() or not index_engine.index_enabled():
-        return {"loaded": False, "reason": "ready_or_absent"}
+    if not SNAPSHOT.exists() or not index_engine.index_enabled():
+        return {"loaded": False, "reason": "absent_or_disabled"}
+    target = Path(path or index_engine.default_db_path()).resolve()
+    # ``_DONE`` n'est qu'une optimisation, jamais une preuve durable : Render
+    # peut remplacer/perdre son disque éphémère après un crash sans recréer le
+    # processus Python de la manière attendue. Revalider le contenu réel.
+    if _DONE:
+        counts = (
+            index_engine.count_query_offers("Balenciaga", path=target)
+            if target.exists() and target.stat().st_size > 0
+            else {"exact": 0, "catalog": 0, "catalog_total": 0}
+        )
+        if counts["exact"] >= 1000 and counts["catalog_total"] >= 10000:
+            return {"loaded": False, "reason": "ready", **counts}
+        _DONE = False
     with _LOCK:
-        if _DONE:
-            return {"loaded": False, "reason": "ready"}
-        target = Path(path or index_engine.default_db_path()).resolve()
-        counts = index_engine.count_query_offers("Balenciaga", path=target)
+        counts = (
+            index_engine.count_query_offers("Balenciaga", path=target)
+            if target.exists() and target.stat().st_size > 0
+            else {"exact": 0, "catalog": 0, "catalog_total": 0}
+        )
         if counts["exact"] >= 1000 and counts["catalog_total"] >= 10000:
             _DONE = True
             return {"loaded": False, "reason": "already_warm", **counts}
