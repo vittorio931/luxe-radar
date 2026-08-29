@@ -2551,7 +2551,7 @@ def _search_signature(recherche, prix_saisi, selected_platform, reference_saisie
     """Empreinte stable des entrées de recherche pour réutiliser le token de
     session (évite de re-frapper les marketplaces quand on change de page)."""
     payload = "|".join([
-        "search-v3",
+        "search-v4",
         # Signer la requête comprise : « Louiss Vuitton » et « Louis Vuitton »
         # partagent le même cache, tandis qu'un ancien token zéro créé avant la
         # correction orthographique ne masque pas le nouveau résultat canonique.
@@ -2579,6 +2579,25 @@ def _reusable_search(signature, owner, active_marketplaces):
         return None, None
     entry = _ensure_search_session(token, owner, active_marketplaces)
     if entry is None:
+        return None, None
+    # Une recherche terminée à zéro n'est pas un cache utile. Elle peut avoir
+    # été persistée juste avant un crash/OOM Render puis rester attachée à un
+    # navigateur précis : les nouvelles sessions voyaient alors des offres,
+    # tandis que ce navigateur réutilisait indéfiniment son ancien token vide.
+    # Les recherches encore réellement progressives restent réutilisables.
+    with _cache_lock:
+        cached = _search_cache.get(token) or entry
+        has_results = bool(cached.get("results"))
+        still_pending = bool(cached.get("pending")) or bool(cached.get("pending_sources"))
+    if not has_results and not still_pending:
+        with _cache_lock:
+            _search_cache.pop(token, None)
+        try:
+            search_sessions.delete_search_session(token)
+        except Exception:
+            app.logger.warning("Session vide impossible à supprimer: %s", token, exc_info=True)
+        session.pop("lr_search_token", None)
+        session.pop("lr_search_signature", None)
         return None, None
     session["lr_search_token"] = token
     session["lr_search_signature"] = signature

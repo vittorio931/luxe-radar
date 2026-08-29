@@ -69,6 +69,27 @@ def main():
         assert restored_token == nike_token
         assert calls == ["Nike Trail", "Stone Island"], calls
 
+        # Une ancienne session terminée à zéro (par exemple juste avant un OOM
+        # Render) doit être supprimée et la recherche réellement relancée.
+        empty_query = "Balenciaga"
+        empty_signature = app_web._search_signature(empty_query, "", "Toutes", "", False)
+        empty_token = "0" * 32
+        search_sessions.save_search_session(
+            empty_token,
+            owner=csrf,
+            search_request=empty_query,
+            selected_platform="Toutes",
+            request_signature=empty_signature,
+            state={"results": [], "pending_sources": [], "completed_sources": ["eBay"]},
+        )
+        with client.session_transaction() as flask_session:
+            flask_session["lr_search_token"] = empty_token
+            flask_session["lr_search_signature"] = empty_signature
+        refreshed_token = submit(empty_query)
+        assert refreshed_token != empty_token
+        assert calls[-1] == empty_query
+        assert search_sessions.load_search_session(empty_token) is None
+
     record = search_sessions.load_search_session(nike_token)
     assert record and len(record["state"]["results"]) == 1
     print("OK - A -> B -> A et restart réutilisent le token SQLite sans nouveau scan.")
