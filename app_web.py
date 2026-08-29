@@ -520,7 +520,7 @@ INDEX_TOKEN_CACHE_LIMIT = min(
 )
 DIVERSIFIED_HEAD_SIZE = 200
 MAX_BATCH_SIZE = 500
-IMAGE_COMPARE_LIMIT = _bounded_env_int("LUXE_RADAR_IMAGE_COMPARE_LIMIT", 64, 16, 120)
+IMAGE_COMPARE_LIMIT = _bounded_env_int("LUXE_RADAR_IMAGE_COMPARE_LIMIT", 96, 16, 120)
 CACHE_TTL_SECONDS = (20 if IS_RENDER_RUNTIME else 30) * 60
 MAX_CACHED_SEARCHES = _bounded_env_int(
     "LUXE_RADAR_MAX_CACHED_SEARCHES",
@@ -2814,6 +2814,29 @@ def _run_radar_search(recherche, prix_saisi, selected_platform, reference_saisie
                         limit=min(index_engine.query_limit(), INDEX_TOKEN_CACHE_LIMIT),
                     ) if index_engine.index_enabled() else index_engine.IndexSearch([], 0, None, "")
                 indexed_results = list(indexed.results)
+                # Un index public ne peut pas contenir à l'avance toutes les
+                # marques. Sur Render, une absence exacte effectue donc un seul
+                # appel HTTP eBay borné avant le rendu. Cela évite la page 0
+                # pendant que le pipeline progressif démarre, sans réactiver
+                # les collecteurs navigateur responsables des anciens 502.
+                if (
+                    _render_snapshot_mode()
+                    and indexed.total == 0
+                    and state["selected_platform"] in {"Toutes", "eBay"}
+                ):
+                    live_results = rechercher_multi_marketplaces(
+                        marque=connector_query,
+                        prix_max=prix,
+                        plateformes=["eBay"],
+                        limite=min(200, SEARCH_RESULT_LIMIT),
+                    )
+                    if live_results:
+                        indexed_results = list(live_results)
+                        indexed = index_engine.IndexSearch(
+                            indexed_results, len(indexed_results), 0.0,
+                            index_engine.canonical_query(connector_query),
+                        )
+                        _index_results_async(indexed_results, connector_query)
                 if IS_RENDER_RUNTIME and state["selected_platform"] == "Toutes" and indexed.total >= 100:
                     indexed_results = _supplement_index_marketplaces(
                         connector_query, indexed_results,

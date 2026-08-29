@@ -4,7 +4,7 @@ import math
 from urllib.parse import urlparse
 
 import requests
-from PIL import Image, ImageOps, UnidentifiedImageError
+from PIL import Image, ImageFilter, ImageOps, UnidentifiedImageError
 
 MAX_IMAGE_BYTES = 2 * 1024 * 1024
 ALLOWED_FORMATS = {"JPEG", "PNG", "WEBP"}
@@ -19,8 +19,33 @@ def _normalise_band(values):
     return tuple((value - minimum) / span for value in values)
 
 
+def _pixels(image, mode, size):
+    resized = image.convert(mode).resize(size, Image.Resampling.LANCZOS)
+    channels = 255.0
+    if mode == "RGB":
+        return tuple(channel / channels for pixel in resized.getdata() for channel in pixel)
+    return tuple(pixel / channels for pixel in resized.getdata())
+
+
+def _colour_histogram(image):
+    """Histogramme RGB 4x4x4, peu sensible au cadrage et au fond."""
+    bins = [0.0] * 64
+    pixels = list(image.convert("RGB").resize((64, 64), Image.Resampling.BILINEAR).getdata())
+    for red, green, blue in pixels:
+        bins[(red // 64) * 16 + (green // 64) * 4 + (blue // 64)] += 1.0
+    total = float(len(pixels) or 1)
+    # Répéter légèrement l'histogramme lui donne un poids utile face aux
+    # grilles spatiales plus longues, sans modèle lourd en production.
+    normalised = tuple(value / total for value in bins)
+    return normalised * 4
+
+
 def image_feature(data):
-    """Visual feature = structure (28x28 luminance) + colour (16x16 RGB)."""
+    """Descripteur perceptuel léger : silhouette, couleur, centre et contours.
+
+    Il tolère mieux les recadrages et les fonds différents que l'ancien simple
+    redimensionnement pixel-à-pixel, tout en restant compatible avec Render.
+    """
     if not data or len(data) > MAX_IMAGE_BYTES:
         raise ValueError("Image invalide ou trop volumineuse.")
     try:
@@ -29,10 +54,15 @@ def image_feature(data):
                 raise ValueError("Format d'image non pris en charge.")
             source.verify()
         with Image.open(BytesIO(data)) as source:
-            image = ImageOps.exif_transpose(source)
-            color = tuple(channel / 255 for pixel in image.convert("RGB").resize((16, 16)).getdata() for channel in pixel)
-            luminance = tuple(pixel / 255 for pixel in image.convert("L").resize((28, 28)).getdata())
-            return _normalise_band(luminance) + color
+            image = ImageOps.exif_transpose(source).convert("RGB")
+            square = ImageOps.pad(image, (320, 320), color=(245, 245, 245), method=Image.Resampling.LANCZOS)
+            width, height = square.size
+            centre = square.crop((width * .12, height * .12, width * .88, height * .88))
+            luminance = _normalise_band(_pixels(square, "L", (28, 28)))
+            colour = _pixels(square, "RGB", (16, 16))
+            centre_colour = _pixels(centre, "RGB", (16, 16))
+            edges = _pixels(square.convert("L").filter(ImageFilter.FIND_EDGES), "L", (16, 16))
+            return luminance + colour + centre_colour + edges + _colour_histogram(square)
     except (UnidentifiedImageError, OSError, ValueError) as exc:
         raise ValueError("Image JPEG, PNG ou WebP invalide.") from exc
 

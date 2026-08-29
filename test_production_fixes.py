@@ -10,6 +10,7 @@ Couvre :
   G — SQLite contention learning vs. collector (connections séparées)
   H — lifecycle preload safety (wsgi.py ne lance pas de workers)
   I — Render snapshot bloque les expansions lourdes entre deux recherches
+  J — index absent : eBay fournit des résultats dès le premier rendu
 """
 from __future__ import annotations
 
@@ -341,6 +342,44 @@ def test_render_snapshot_expansion_guard():
     _check("I4_new_render_token_exhausted", cache_exhausted)
 
 
+def test_render_cold_query_has_immediate_results():
+    """Une marque absente du snapshot ne doit pas afficher zéro en production."""
+    import app_web
+    import index_engine
+
+    client = app_web.app.test_client()
+    client.get("/")
+    with client.session_transaction() as browser_session:
+        csrf = browser_session["csrf_token"]
+    offer = {
+        "marketplace": "eBay", "titre": "Pantalon Columbia randonnée",
+        "prix": 49.0, "niveau_identite": "fort", "score_identite": 95,
+        "score": 90, "score_confiance": 90,
+        "lien": "https://example.test/columbia-pants",
+    }
+    empty = index_engine.IndexSearch([], 0, None, "pantalon columbia test froid")
+    with patch.object(app_web, "_render_snapshot_mode", return_value=True), \
+         patch.object(index_engine, "search", return_value=empty), \
+         patch.object(app_web, "rechercher_multi_marketplaces", return_value=[offer]) as live, \
+         patch.object(app_web, "_index_results_async"), \
+         patch.object(app_web, "_progressive_source_order", return_value=[]):
+        response = client.post("/", data={
+            "csrf_token": csrf,
+            "marque": "pantalon Columbia test froid",
+            "prix": "",
+            "plateforme": "Toutes",
+        })
+
+    _check("J1_cold_query_http_200", response.status_code == 200)
+    _check("J2_cold_query_calls_safe_ebay",
+           live.call_count == 1 and live.call_args.kwargs.get("plateformes") == ["eBay"])
+    with client.session_transaction() as browser_session:
+        token = browser_session.get("lr_search_token")
+    with _cache_lock:
+        count = len((_search_cache.get(token) or {}).get("results") or [])
+    _check("J3_cold_query_initial_nonzero", count == 1, f"count={count}")
+
+
 # ============================================================
 # Main
 # ============================================================
@@ -354,6 +393,7 @@ ALL_TESTS = [
     test_learning_separate_connection,
     test_wsgi_bare_exposure,
     test_render_snapshot_expansion_guard,
+    test_render_cold_query_has_immediate_results,
 ]
 
 

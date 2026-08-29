@@ -184,7 +184,10 @@ def main():
              patch("app_web._progressive_source_order", return_value=[]):
             cold_response = _post(client, csrf)
             cold_token = _token(cold_response.get_data(as_text=True))
-        assert app_web._search_cache[cold_token]["index_total"] == 0
+        # Le rendu initial peut désormais réparer immédiatement le zéro via le
+        # catalogue global ou le fallback HTTP sûr. Il ne doit surtout plus
+        # conserver artificiellement le snapshot `index_total=0`.
+        assert len(app_web._search_cache[cold_token]["results"]) > 0
         with patch.object(index_engine, "search", side_effect=search_in_test_db):
             cold_endpoint = client.get(
                 f"/api/results/{cold_token}?offset=0&limit=50"
