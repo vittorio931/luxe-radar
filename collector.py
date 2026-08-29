@@ -144,6 +144,7 @@ def _env_float(name: str, default: float, minimum: float, maximum: float) -> flo
 
 
 COLLECTOR_ENABLED = _env_bool("LUXE_RADAR_COLLECTOR_ENABLED", True)
+COLLECTOR_STARTUP_SEEDS_ENABLED = _env_bool("LUXE_RADAR_COLLECTOR_STARTUP_SEEDS_ENABLED", True)
 COLLECTOR_FRESHNESS_SECONDS = _env_int("LUXE_RADAR_COLLECTOR_FRESHNESS_SECONDS", 24 * 60 * 60, 300, 30 * 24 * 60 * 60)
 COLLECTOR_SLEEP_SECONDS = _env_float("LUXE_RADAR_COLLECTOR_SLEEP_SECONDS", 5.0, 1.0, 300.0)
 COLLECTOR_PAGE_DELAY_SECONDS = _env_float("LUXE_RADAR_COLLECTOR_PAGE_DELAY_SECONDS", 0.3, 0.0, 60.0)
@@ -151,6 +152,12 @@ COLLECTOR_EMPTY_PAGES = _env_int("LUXE_RADAR_COLLECTOR_EMPTY_PAGES", 0, 0, 20)
 COLLECTOR_SEED_BUDGET_SECONDS = _env_float("LUXE_RADAR_COLLECTOR_SEED_BUDGET_SECONDS", 300.0, 30.0, 3600.0)
 COLLECTOR_IDLE_SECONDS = _env_float("LUXE_RADAR_COLLECTOR_IDLE_SECONDS", 60.0, 10.0, 3600.0)
 COLLECTOR_TRIGGER_WINDOW_SECONDS = _env_int("LUXE_RADAR_COLLECTOR_TRIGGER_WINDOW_SECONDS", 300, 30, 86400)
+
+
+def _allowed_source_names() -> set[str]:
+    """Allowlist optionnelle, surtout utile sur les petits workers web."""
+    raw = os.environ.get("LUXE_RADAR_COLLECTOR_ALLOWED_SOURCES") or ""
+    return {name.strip().casefold() for name in raw.split(",") if name.strip()}
 
 
 def parse_seeds(raw: str | None = None) -> list[tuple[str, float]]:
@@ -212,6 +219,12 @@ def _source_priority(name: str) -> int:
 def ordered_sources(available: dict | None = None, query: str = "") -> list:
     """Sources disponibles ordonnées productif d'abord, cooldowns sautés."""
     available = available if available is not None else get_available_connectors()
+    allowed = _allowed_source_names()
+    if allowed:
+        available = {
+            name: connector for name, connector in available.items()
+            if name.casefold() in allowed
+        }
     if query:
         return [item.connector for item in plan_sources(query, available)]
     ordered = []
@@ -645,6 +658,8 @@ class Collector:
         return True
 
     def _refill_defaults(self):
+        if not COLLECTOR_STARTUP_SEEDS_ENABLED:
+            return 0
         added = 0
         for query, price_max in parse_seeds():
             if self._seed_stale(query, price_max):
