@@ -36,6 +36,11 @@ def main():
             index_engine.upsert_results([tech_wind_offer], "Columbia", path=target)
             broad_columbia = index_engine.search("Columbia", limit=50, path=target)
             refined_columbia = index_engine.search("Columbia Tech Wind", limit=50, path=target)
+            media_words = ("vinyl", "vinyle", " lp ", " cd ", "album", "disque", "record")
+            assert all(
+                not any(word in f" {str(item.get('titre') or '').casefold()} " for word in media_words)
+                for item in broad_columbia.results[:20]
+            )
             assert 0 < refined_columbia.total < broad_columbia.total
             assert any(item.get("lien") == tech_wind_offer["lien"] for item in refined_columbia.results)
             assert all(

@@ -404,6 +404,30 @@ def _query_match_score(item: dict, query: str, *, info=None, q_key: str | None =
     return score
 
 
+def _brand_domain_rank(item: dict, q_key: str) -> int:
+    """Désambiguise une marque commerciale sans supprimer les homonymes."""
+    if q_key != "columbia":
+        return 0
+    title = _fold(str(item.get("titre") or item.get("title") or ""))
+    apparel = (
+        "veste", "jacket", "manteau", "coat", "pantalon", "pants", "trouser",
+        "jogging", "short", "shirt", "chemise", "polaire", "fleece", "sweat",
+        "chaussure", "shoe", "boot", "sandale", "casquette", "cap", "bonnet",
+        "outdoor", "randonnee", "hiking", "omni tech", "omni heat", "titanium",
+    )
+    media = (
+        "vinyl", " vinyle", " lp ", " cd ", " dvd", "blu ray", "album",
+        "disque", "record", "soundtrack", "bande originale", "musique",
+        "music", "single", "cassette", "film", "cinema",
+    )
+    padded = f" {title} "
+    if any(term in padded for term in apparel):
+        return 0
+    if any(term in padded for term in media):
+        return 2
+    return 1
+
+
 # Schéma initialisé une seule fois par chemin de base : les connexions
 # suivantes ne rejouent plus le DDL (verrous exclusifs) sur le chemin chaud.
 # Sans cela, le collecteur (écritures continues) faisait échouer les lectures
@@ -1428,6 +1452,7 @@ def _python_sort(items: list[dict], sort: str, query: str, learning_scores: dict
         return sorted(items, key=lambda item: (-_safe_float(item.get("score_confiance"), 0), -rank(item), *_final_tiebreak(item)))
     return sorted(items, key=lambda item: (
         1 if item.get("offer_state") == "STALE" else 0,
+        _brand_domain_rank(item, q_key),
         identity_order.get(_identity_level(item), 1),
         -(rank(item) + max(-2.0, min(2.0, _safe_float(
             learning_scores.get(str(item.get("marketplace") or ""), learning_scores.get("", 0.0)), 0.0
