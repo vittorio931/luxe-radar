@@ -9,6 +9,7 @@ Couvre :
   F — identity default 'all' (diversité scroll)
   G — SQLite contention learning vs. collector (connections séparées)
   H — lifecycle preload safety (wsgi.py ne lance pas de workers)
+  I — Render snapshot bloque les expansions lourdes entre deux recherches
 """
 from __future__ import annotations
 
@@ -308,6 +309,39 @@ def test_wsgi_bare_exposure():
 
 
 # ============================================================
+# I — Render snapshot: aucune expansion lourde après le scroll
+# ============================================================
+def test_render_snapshot_expansion_guard():
+    import app_web
+
+    token = _make_token()
+    _seed_cache(token, owner="render-test", query="Nike Phenom Elite", price=1000)
+    active = ["Vinted", "eBay", "Grailed", "SSENSE", "The Outnet", "Zalando"]
+
+    with patch.object(app_web, "_render_snapshot_mode", return_value=True), \
+         patch.object(_progressive_executor, "submit") as mock_submit:
+        sources = app_web._progressive_source_order("sac Louis Vuitton", active)
+        payload, status = app_web._expand_search_once(token, "render-test")
+        cached = app_web._cache_results(
+            [], "render-cache", search_query="sac Louis Vuitton",
+            expansion_exhausted=app_web._render_snapshot_mode(),
+        )
+
+    _check("I1_render_sources_http_safe",
+           set(sources).issubset({"eBay", "SSENSE", "The Outnet"}),
+           f"unexpected sources: {sources}")
+    _check("I2_render_expand_stopped",
+           status == 200 and payload.get("exhausted") is True,
+           f"status={status}, payload={payload}")
+    _check("I3_render_no_background_submit",
+           not mock_submit.called,
+           "a heavy background expansion was submitted")
+    with _cache_lock:
+        cache_exhausted = bool(_search_cache[cached].get("expansion_exhausted"))
+    _check("I4_new_render_token_exhausted", cache_exhausted)
+
+
+# ============================================================
 # Main
 # ============================================================
 ALL_TESTS = [
@@ -319,6 +353,7 @@ ALL_TESTS = [
     test_identity_default_all,
     test_learning_separate_connection,
     test_wsgi_bare_exposure,
+    test_render_snapshot_expansion_guard,
 ]
 
 

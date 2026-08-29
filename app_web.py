@@ -581,6 +581,15 @@ _LUXURY_UNIVERSE_QUERIES = (
     "Dior", "Off-White", "Ralph Lauren",
 )
 
+# Render Free doit rester un processus HTTP léger. Les connecteurs navigateur
+# et les vagues de rappel profondes peuvent dépasser ses 512 Mo lorsqu'une
+# seconde recherche démarre pendant leur exécution.
+_RENDER_HTTP_SEARCH_SOURCES = frozenset({"eBay", "SSENSE", "The Outnet"})
+
+
+def _render_snapshot_mode():
+    return bool(IS_RENDER_RUNTIME and bootstrap_index.SNAPSHOT.exists())
+
 def _rotating_luxury_query() -> str:
     import time as _time
     return _LUXURY_UNIVERSE_QUERIES[int(_time.strftime("%j")) % len(_LUXURY_UNIVERSE_QUERIES)]
@@ -648,6 +657,8 @@ def _progressive_source_order(query, active_marketplaces):
     else:
         preferred = generic_priority
     active = list(active_marketplaces or [])
+    if _render_snapshot_mode():
+        active = [name for name in active if name in _RENDER_HTTP_SEARCH_SOURCES]
     ranked = {}
     for index, name in enumerate(preferred):
         if name in active:
@@ -1202,6 +1213,7 @@ def _cache_results(
     index_hit_count=0, index_total=0, index_age_seconds=None,
     selected_platform=None, reference=None, reference_stricte=False,
     universe="", search_signature="", reuse_token=None,
+    expansion_exhausted=False,
 ):
     token = reuse_token or uuid4().hex
     pending_sources = list(dict.fromkeys(str(source) for source in (pending_sources or []) if str(source)))
@@ -1263,7 +1275,7 @@ def _cache_results(
             "discovery_has_more": True,
             "expansion_round": 0,
             "expansion_inflight": False,
-            "expansion_exhausted": False,
+            "expansion_exhausted": bool(expansion_exhausted),
             "catalog_scanned": 0,
             # V3.7.x : observabilité [SOURCE][PAGE] et [SEARCH SUMMARY].
             "source_pages": {},
@@ -2365,6 +2377,17 @@ def _expand_search_once(token, owner, marketplace="Toutes"):
         expected_owner = str(entry.get("owner") or "")
         if expected_owner and not secrets.compare_digest(expected_owner, owner):
             return None, 404
+        # En production, l'index persistant fournit le scroll profond. Ne pas
+        # lancer une collecte réseau après son dernier lot : c'était la course
+        # entre la fin de Nike Phenom Elite et la recherche suivante qui
+        # faisait tomber Render. Ce garde-fou couvre les anciens tokens aussi.
+        if _render_snapshot_mode():
+            entry["expansion_inflight"] = False
+            entry["expansion_exhausted"] = True
+            return {
+                "accepted": False, "busy": False, "added": 0,
+                "exhausted": True,
+            }, 200
         if entry.get("expansion_inflight"):
             return {"accepted": True, "busy": True, "added": 0, "exhausted": bool(entry.get("expansion_exhausted")), "retry_after_ms": 1800}, 202
         query = str(entry.get("search_query") or "").strip()
@@ -2823,6 +2846,7 @@ def _run_radar_search(recherche, prix_saisi, selected_platform, reference_saisie
                     reference_stricte=state["reference_stricte"],
                     universe=universe,
                     search_signature=search_signature,
+                    expansion_exhausted=_render_snapshot_mode(),
                 )
                 _submit_progressive(state["search_token"], connector_query, prix)
                 _finalize_first_page()
@@ -2873,6 +2897,7 @@ def _run_radar_search(recherche, prix_saisi, selected_platform, reference_saisie
                     reference_stricte=state["reference_stricte"],
                     universe=universe,
                     search_signature=search_signature,
+                    expansion_exhausted=_render_snapshot_mode(),
                 )
                 _submit_progressive(state["search_token"], connector_query, prix)
                 _finalize_first_page()
