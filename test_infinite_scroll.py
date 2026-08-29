@@ -46,6 +46,8 @@ def sample_results(count=170):
 def main():
     app_js = (ROOT / "static" / "app.js").read_text(encoding="utf-8")
     assert "pendingResultReset=true;loadEpoch++" in app_js
+    assert "renderedBefore>authoritativeTotal" in app_js
+    assert "start>authoritativeTotal" in app_js
     assert "await expandSearch()" not in app_js
     assert "expandSearch().then(()=>scheduleAutoLoad(220))" in app_js
     assert _safe_number(float("nan"), 7) == 7

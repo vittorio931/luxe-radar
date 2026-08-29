@@ -25,7 +25,7 @@ services:
       - key: LUXE_RADAR_MULTI_TIMEOUT
         value: "8"
       - key: LUXE_RADAR_SEARCH_RESULT_LIMIT
-        value: "2000"
+        value: "500"
       - key: LUXE_RADAR_MAX_CACHED_SEARCHES
         value: "8"
       - key: LUXE_RADAR_PROGRESSIVE_WORKERS
@@ -48,7 +48,7 @@ services:
       # aucun seed massif au démarrage et aucun connecteur Chromium : le scroll
       # déclenche l'approfondissement HTTP du produit réellement recherché.
       - key: LUXE_RADAR_COLLECTOR_ENABLED
-        value: "true"
+        value: "false"
       - key: LUXE_RADAR_COLLECTOR_STARTUP_SEEDS_ENABLED
         value: "false"
       - key: LUXE_RADAR_COLLECTOR_ALLOWED_SOURCES

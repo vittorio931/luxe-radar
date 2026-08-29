@@ -151,11 +151,11 @@ def _is_render_runtime() -> bool:
     )
 
 
-# Render peut conserver une ancienne variable de tableau de bord qui prime sur
-# render.yaml. Le mode à la demande reste sûr : aucun seed au démarrage et une
-# allowlist HTTP seulement. Il est donc activé directement sur ce runtime.
-COLLECTOR_ON_DEMAND_MODE = _is_render_runtime()
-COLLECTOR_ENABLED = _env_bool("LUXE_RADAR_COLLECTOR_ENABLED", True) or COLLECTOR_ON_DEMAND_MODE
+# Le collecteur profond partage actuellement le petit processus web. Il reste
+# donc explicitement opt-in : l'activer implicitement sur Render peut épuiser
+# le worker pendant qu'une deuxième recherche progressive démarre.
+COLLECTOR_ON_DEMAND_MODE = _env_bool("LUXE_RADAR_COLLECTOR_ON_DEMAND_MODE", False)
+COLLECTOR_ENABLED = _env_bool("LUXE_RADAR_COLLECTOR_ENABLED", True)
 COLLECTOR_STARTUP_SEEDS_ENABLED = (
     _env_bool("LUXE_RADAR_COLLECTOR_STARTUP_SEEDS_ENABLED", True)
     and not COLLECTOR_ON_DEMAND_MODE

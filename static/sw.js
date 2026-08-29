@@ -1,12 +1,12 @@
-const CACHE = 'luxe-radar-shell-v397-search-speed';
+const CACHE = 'luxe-radar-shell-v398-search-stability';
 const SHELL = [
-  '/static/app.css?v=20260829-397',
-  '/static/app.js?v=20260829-397',
-  '/static/risk.js?v=20260829-397',
+  '/static/app.css?v=20260829-398',
+  '/static/app.js?v=20260829-398',
+  '/static/risk.js?v=20260829-398',
   '/static/app-icon.svg',
-  '/static/app-icon-192.png?v=20260829-397',
-  '/static/app-icon-512.png?v=20260829-397',
-  '/static/manifest.webmanifest?v=20260829-397',
+  '/static/app-icon-192.png?v=20260829-398',
+  '/static/app-icon-512.png?v=20260829-398',
+  '/static/manifest.webmanifest?v=20260829-398',
   '/static/offline.html',
   '/static/offline.css',
   '/static/offline.js'
