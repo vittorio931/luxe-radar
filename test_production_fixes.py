@@ -388,12 +388,12 @@ def test_free_model_query_relaxes_without_losing_brand():
     wind = {"marketplace": "eBay", "titre": "Columbia Wind veste", "lien": "https://example.test/wind"}
     with patch.object(
         app_web, "rechercher_multi_marketplaces",
-        side_effect=[[], [tech], [wind]],
+        side_effect=[[tech], [wind]],
     ) as search:
         results = app_web._render_live_ebay_results("Columbia Tech Wind", 500)
     queries = [call.kwargs.get("marque") for call in search.call_args_list]
     _check("K1_relaxed_queries_keep_brand",
-           queries == ["Columbia Tech Wind", "Columbia tech", "Columbia wind"],
+           set(queries) == {"Columbia tech", "Columbia wind"},
            f"queries={queries}")
     _check("K2_relaxed_results_are_merged", len(results) == 2)
 

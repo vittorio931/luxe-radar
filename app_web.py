@@ -614,23 +614,32 @@ def _render_live_ebay_results(query, price):
         brand and not product_type and not model and len(residual) >= 2
         and all(token.isalpha() for token in residual)
     ):
-        queries.extend(f"{brand} {token}" for token in residual[:3])
+        # Chaque variante contient aussi les éventuelles correspondances
+        # exactes ; inutile de payer d'abord une requête AND presque toujours
+        # vide. Les deux appels HTTP indépendants peuvent partir en parallèle.
+        queries = [f"{brand} {token}" for token in residual[:3]]
 
     merged = {}
-    for position, candidate_query in enumerate(dict.fromkeys(queries)):
-        additions = rechercher_multi_marketplaces(
+    unique_queries = list(dict.fromkeys(queries))
+
+    def _search(candidate_query):
+        return rechercher_multi_marketplaces(
             marque=candidate_query,
             prix_max=price,
             plateformes=["eBay"],
             limite=min(200, SEARCH_RESULT_LIMIT),
         )
+    if len(unique_queries) > 1:
+        with ThreadPoolExecutor(max_workers=min(3, len(unique_queries))) as executor:
+            additions_by_query = list(executor.map(_search, unique_queries))
+    else:
+        additions_by_query = [_search(unique_queries[0])]
+
+    for position, additions in enumerate(additions_by_query):
         for item in additions or []:
             key = _cle_unique_multi(item)
             if key not in merged:
                 merged[key] = dict(item, _relaxed_query_position=position)
-        # Une correspondance exacte productive n'a pas besoin d'être élargie.
-        if position == 0 and len(merged) >= 20:
-            break
     return list(merged.values())[:min(250, SEARCH_RESULT_LIMIT)]
 
 def _rotating_luxury_query() -> str:
