@@ -514,6 +514,10 @@ if IS_RENDER_RUNTIME and bootstrap_index.SNAPSHOT.exists():
     # Le catalogue préchargé est lu depuis SQLite et paginé par lots ; ce
     # plafond autorise les 1 352 Balenciaga sans lancer de collecte lourde.
     SEARCH_RESULT_LIMIT = max(2000, SEARCH_RESULT_LIMIT)
+INDEX_TOKEN_CACHE_LIMIT = min(
+    SEARCH_RESULT_LIMIT,
+    250 if IS_RENDER_RUNTIME and bootstrap_index.SNAPSHOT.exists() else SEARCH_RESULT_LIMIT,
+)
 DIVERSIFIED_HEAD_SIZE = 200
 MAX_BATCH_SIZE = 500
 IMAGE_COMPARE_LIMIT = _bounded_env_int("LUXE_RADAR_IMAGE_COMPARE_LIMIT", 64, 16, 120)
@@ -1802,15 +1806,18 @@ def _index_spillover(entry, token_results, offset, limit, *, sort="relevance", m
         # ``index_total`` n'est qu'un snapshot de démarrage. Toujours relire
         # l'index à l'épuisement du token : le collecteur peut avoir ajouté des
         # centaines d'offres réelles entre-temps.
-        index_offset = max(0, offset - len(token_results or []))
+        # ``offset`` est l'offset global demandé par le navigateur. Les pages
+        # spillover ne sont volontairement pas recopiées dans le token RAM ;
+        # le soustraire à sa taille répétait donc la première page SQLite.
+        index_offset = offset
         indexed = index_engine.search(
             query,
             price_max=entry.get("search_price") or None,
             marketplace=marketplace,
-            identity="all",
+            identity=identity,
             risk=risk,
             sort=sort,
-            limit=min(index_engine.query_limit(), SEARCH_RESULT_LIMIT),
+            limit=min(index_engine.query_limit(), max(limit * 3, 200)),
             offset=index_offset,
         )
         if not indexed or not indexed.results:
@@ -1832,7 +1839,7 @@ def _index_spillover(entry, token_results, offset, limit, *, sort="relevance", m
         return {
             "results": page_items,
             "has_more": has_more,
-            "total": len(token_results or []) + remaining_index,
+            "total": indexed.total,
         }
     except Exception:  # pragma: no cover - défensif, jamais sur le chemin de réponse
         return None
@@ -1917,9 +1924,13 @@ def _result_page(token, offset, limit=RESULT_BATCH_SIZE, sort="relevance", marke
     per_page = max(1, int(limit))
     page = [_public_result(item) for item in results[offset:offset + limit]]
     next_offset = offset + len(page)
-    total = len(results)
+    cached_total = len(results)
+    advertised_index_total = int(entry_snapshot.get("index_total") or 0)
+    total = max(cached_total, advertised_index_total)
     has_more = next_offset < total
-    if not has_more:
+    # Une page non vide appartient encore au cache RAM. À son épuisement,
+    # seulement, lire le prochain lot SQLite (sans charger 2 000 payloads).
+    if not page and offset >= cached_total:
         spilled = _index_spillover(
             entry_snapshot, results, offset, per_page, sort=sort, marketplace=marketplace,
             price_min=price_min, price_max=price_max, price_exact=price_exact,
@@ -2742,7 +2753,7 @@ def _run_radar_search(recherche, prix_saisi, selected_platform, reference_saisie
                         price_max=(prix if prix_saisi else None),
                         marketplace=state["selected_platform"],
                         identity="confirmed",
-                        limit=min(index_engine.query_limit(), SEARCH_RESULT_LIMIT),
+                        limit=min(index_engine.query_limit(), INDEX_TOKEN_CACHE_LIMIT),
                     ) if index_engine.index_enabled() else index_engine.IndexSearch([], 0, None, "")
                 else:
                     indexed = index_engine.search(
@@ -2750,7 +2761,7 @@ def _run_radar_search(recherche, prix_saisi, selected_platform, reference_saisie
                         price_max=(prix if prix_saisi else None),
                         marketplace=state["selected_platform"],
                         identity="all",
-                        limit=min(index_engine.query_limit(), SEARCH_RESULT_LIMIT),
+                        limit=min(index_engine.query_limit(), INDEX_TOKEN_CACHE_LIMIT),
                     ) if index_engine.index_enabled() else index_engine.IndexSearch([], 0, None, "")
                 indexed_results = _rank_by_reference(indexed.results, reference_saisie, state["reference_stricte"])
                 indexed_confirmed = _sorted_results(indexed_results, identity="confirmed")
@@ -2758,8 +2769,12 @@ def _run_radar_search(recherche, prix_saisi, selected_platform, reference_saisie
                 state["index_age_seconds"] = indexed.age_seconds
                 state["index_mode"] = state["index_hit_count"] > 0
 
-                if plateformes is None:
-                    progressive_sources = _progressive_source_order(connector_query, active_marketplaces)
+                if IS_RENDER_RUNTIME and indexed.total >= 100:
+                    progressive_sources = []
+                elif plateformes is None:
+                    progressive_sources = (
+                        _progressive_source_order(connector_query, active_marketplaces)
+                    )
                 else:
                     progressive_sources = [name for name in plateformes if name in active_marketplaces]
 
@@ -2796,7 +2811,7 @@ def _run_radar_search(recherche, prix_saisi, selected_platform, reference_saisie
                     price_max=(prix if prix_saisi else None),
                     marketplace=state["selected_platform"],
                     identity="confirmed",
-                    limit=min(index_engine.query_limit(), SEARCH_RESULT_LIMIT),
+                    limit=min(index_engine.query_limit(), INDEX_TOKEN_CACHE_LIMIT),
                 ) if index_engine.index_enabled() else index_engine.IndexSearch([], 0, None, "")
                 indexed_results = list(indexed.results)
                 indexed_confirmed = _sorted_results(indexed_results, identity="confirmed")
@@ -2804,8 +2819,12 @@ def _run_radar_search(recherche, prix_saisi, selected_platform, reference_saisie
                 state["index_age_seconds"] = indexed.age_seconds
                 state["index_mode"] = state["index_hit_count"] > 0
 
-                if plateformes is None:
-                    progressive_sources = _progressive_source_order(connector_query, active_marketplaces)
+                if IS_RENDER_RUNTIME and indexed.total >= 100:
+                    progressive_sources = []
+                elif plateformes is None:
+                    progressive_sources = (
+                        _progressive_source_order(connector_query, active_marketplaces)
+                    )
                 else:
                     progressive_sources = [name for name in plateformes if name in active_marketplaces]
 

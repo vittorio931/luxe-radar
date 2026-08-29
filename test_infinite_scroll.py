@@ -101,6 +101,32 @@ def main():
     assert _cle_unique_multi({"marketplace": "eBay", "lien": "https://x/item?track=1"}) == \
            _cle_unique_multi({"marketplace": "eBay", "lien": "https://x/item?track=2"})
 
+    deep_results = [
+        {"marketplace": "eBay", "titre": f"Deep {i}", "prix": i + 1,
+         "score": 100 - i / 10, "score_confiance": 80,
+         "niveau_identite": "possible", "lien": f"https://deep.example/{i}"}
+        for i in range(350)
+    ]
+    deep_owner = "deep-owner"
+    deep_token = _cache_results(
+        deep_results[:250], deep_owner, search_query="Deep",
+        search_price=1_000_000, index_total=350,
+    )
+
+    def fake_deep_index(_query, **kwargs):
+        start = int(kwargs.get("offset", 0))
+        limit = int(kwargs.get("limit", 200))
+        return index_engine.IndexSearch(deep_results[start:start + limit], 350, 0.0, "deep")
+
+    with patch.object(index_engine, "search", side_effect=fake_deep_index):
+        deep_page_1 = app_web._result_page(deep_token, 250, 50, identity="all", owner=deep_owner)
+        deep_page_2 = app_web._result_page(deep_token, 300, 50, identity="all", owner=deep_owner)
+    deep_urls_1 = {item["lien"] for item in deep_page_1["results"]}
+    deep_urls_2 = {item["lien"] for item in deep_page_2["results"]}
+    assert len(deep_urls_1) == len(deep_urls_2) == 50
+    assert deep_urls_1.isdisjoint(deep_urls_2)
+    assert deep_page_1["total"] == deep_page_2["total"] == 350
+
     client = app.test_client()
     client.get("/")
     with client.session_transaction() as browser_session:
