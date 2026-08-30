@@ -44,9 +44,13 @@ from marketplaces.connectors.universal import discover_catalog_wave
 from marketplaces.source_health import current_environment, registry as source_health
 
 try:
-    from search_intent import parse_search_intent as _parse_intent_impl
+    from search_intent import (
+        TYPE_ALIASES as _SEARCH_TYPE_ALIASES,
+        parse_search_intent as _parse_intent_impl,
+    )
 except Exception:  # pragma: no cover - observability must never crash the app
     _parse_intent_impl = None
+    _SEARCH_TYPE_ALIASES = {}
 
 
 def _parse_intent(query):
@@ -587,10 +591,75 @@ _LUXURY_UNIVERSE_QUERIES = (
 # et les vagues de rappel profondes peuvent dépasser ses 512 Mo lorsqu'une
 # seconde recherche démarre pendant leur exécution.
 _RENDER_HTTP_SEARCH_SOURCES = frozenset({"eBay", "SSENSE", "The Outnet"})
+RENDER_BACKGROUND_ENRICH_TARGET = _bounded_env_int(
+    "LUXE_RADAR_RENDER_ENRICH_TARGET", 1000, 200, 3000
+)
+
+_TYPE_QUERY_VARIANTS = {
+    "pantalon": ("pants", "trousers"),
+    "baskets": ("sneakers", "trainers"),
+    "chaussures": ("shoes", "sneakers"),
+    "veste": ("jacket", "coat"),
+    "manteau": ("coat", "overcoat"),
+    "doudoune": ("puffer jacket", "down jacket"),
+    "sweat": ("hoodie", "sweatshirt"),
+    "pull": ("sweater", "jumper"),
+    "t-shirt": ("t-shirt", "tee"),
+    "tee-shirt": ("t-shirt", "tee"),
+    "chemise": ("shirt", "button shirt"),
+    "short": ("shorts",),
+    "sac": ("bag", "handbag"),
+    "robe": ("dress",),
+    "jupe": ("skirt",),
+    "casquette": ("cap", "baseball cap"),
+    "bonnet": ("beanie",),
+    "gilet": ("vest", "bodywarmer"),
+    "jogging": ("track pants", "sweatpants"),
+    "jean": ("jeans", "denim pants"),
+}
 
 
 def _render_snapshot_mode():
     return bool(IS_RENDER_RUNTIME and bootstrap_index.SNAPSHOT.exists())
+
+
+def _render_background_sources(index_total, selected_platform, active_marketplaces):
+    """Sources HTTP sûres pour compléter un index déjà rendu sur Render."""
+    if not IS_RENDER_RUNTIME:
+        return []
+    total = max(0, int(index_total or 0))
+    if total < 100 or total >= RENDER_BACKGROUND_ENRICH_TARGET:
+        return []
+    selected = str(selected_platform or "Toutes")
+    active = set(active_marketplaces or ())
+    if selected == "Toutes":
+        return [name for name in ("eBay", "SSENSE", "The Outnet") if name in active]
+    if selected in _RENDER_HTTP_SEARCH_SOURCES and selected in active:
+        return [selected]
+    return []
+
+
+def _background_query_variants(query):
+    """Variantes internationales bornées sans retirer le type demandé."""
+    query = str(query or "").strip()
+    variants = [query]
+    intent = _parse_intent(query)
+    if intent is None or not intent.brand or not intent.product_type:
+        return variants
+
+    anchor = " ".join(
+        str(value or "").strip()
+        for value in (intent.brand, intent.model or intent.line)
+        if str(value or "").strip()
+    )
+    type_variants = list(_TYPE_QUERY_VARIANTS.get(intent.product_type, ()))
+    if not type_variants:
+        aliases = tuple(_SEARCH_TYPE_ALIASES.get(intent.product_type, ()))
+        type_variants = [alias for alias in aliases if alias and alias.isascii()][:2]
+    variants.extend(f"{anchor} {alias}".strip() for alias in type_variants[:2])
+    if intent.brand == "Nike" and intent.line == "trail" and intent.product_type == "pantalon":
+        variants.extend(("Nike ACG pants", "Nike Phenom Elite pants"))
+    return list(dict.fromkeys(value for value in variants if value))[:5]
 
 
 def _render_live_ebay_results(query, price):
@@ -602,7 +671,7 @@ def _render_live_ebay_results(query, price):
     alphanumérique/SKU n'est jamais relâchée.
     """
     query = str(query or "").strip()
-    queries = [query]
+    queries = _background_query_variants(query)
     info = understand_query(query)
     brand = str(getattr(info, "brand", "") or "").strip() if info else ""
     product_type = getattr(info, "product_type", None) if info else None
@@ -632,17 +701,25 @@ def _render_live_ebay_results(query, price):
             limite=min(200, SEARCH_RESULT_LIMIT),
         )
     if len(unique_queries) > 1:
-        with ThreadPoolExecutor(max_workers=min(3, len(unique_queries))) as executor:
+        # Deux réponses eBay au maximum en mémoire simultanément sur Render.
+        with ThreadPoolExecutor(max_workers=min(2, len(unique_queries))) as executor:
             additions_by_query = list(executor.map(_search, unique_queries))
     else:
         additions_by_query = [_search(unique_queries[0])]
 
     for position, additions in enumerate(additions_by_query):
         for item in additions or []:
+            # Une variante élargit uniquement la collecte : la décision finale
+            # reste toujours prise contre la requête exacte de l'utilisateur.
+            try:
+                if not evaluate_offer(query, item).accepted:
+                    continue
+            except Exception:
+                continue
             key = _cle_unique_multi(item)
             if key not in merged:
                 merged[key] = dict(item, _relaxed_query_position=position)
-    return list(merged.values())[:min(250, SEARCH_RESULT_LIMIT)]
+    return list(merged.values())[:min(600, SEARCH_RESULT_LIMIT)]
 
 def _rotating_luxury_query() -> str:
     import time as _time
@@ -1654,6 +1731,8 @@ def _finish_progressive_source(token, query, price, source, reference, strict, o
             # Tous les autres connecteurs actifs disposent du même budget de
             # rappel renforcé. Leur connecteur reste libre de s'arrêter plus tôt
             # si le site n'expose pas davantage de cartes propres.
+            if source == "eBay" and _render_snapshot_mode():
+                return _render_live_ebay_results(query, price)
             source_limit = min(source_caps.get(source, 60), SEARCH_RESULT_LIMIT)
             return rechercher_multi_marketplaces(
                 marque=query,
@@ -2921,7 +3000,12 @@ def _run_radar_search(recherche, prix_saisi, selected_platform, reference_saisie
                 state["index_mode"] = state["index_hit_count"] > 0
 
                 if IS_RENDER_RUNTIME and indexed.total >= 100:
-                    progressive_sources = []
+                    # L'index s'affiche immédiatement ; une source HTTP légère
+                    # enrichit ensuite les recherches encore sous la cible.
+                    # Ces trois connecteurs n'ouvrent aucun Chromium.
+                    progressive_sources = _render_background_sources(
+                        indexed.total, state["selected_platform"], active_marketplaces
+                    )
                 elif plateformes is None:
                     progressive_sources = (
                         _progressive_source_order(connector_query, active_marketplaces)
@@ -2972,7 +3056,9 @@ def _run_radar_search(recherche, prix_saisi, selected_platform, reference_saisie
                 state["index_mode"] = state["index_hit_count"] > 0
 
                 if IS_RENDER_RUNTIME and indexed.total >= 100:
-                    progressive_sources = []
+                    progressive_sources = _render_background_sources(
+                        indexed.total, state["selected_platform"], active_marketplaces
+                    )
                 elif plateformes is None:
                     progressive_sources = (
                         _progressive_source_order(connector_query, active_marketplaces)

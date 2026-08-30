@@ -113,6 +113,30 @@ def main():
     assert SEARCH_SESSION_TTL_SECONDS >= 7 * 24 * 60 * 60
     search_sessions.drop_sessions()
 
+    # Les recherches typées sous 1 000 résultats gardent leur rendu indexé
+    # instantané, puis utilisent uniquement les connecteurs HTTP légers.
+    with patch.object(app_web, "IS_RENDER_RUNTIME", True):
+        assert app_web._render_background_sources(
+            130, "Toutes", ["eBay", "SSENSE", "Vinted", "The Outnet"]
+        ) == ["eBay", "SSENSE", "The Outnet"]
+        assert app_web._render_background_sources(1000, "Toutes", ["eBay"]) == []
+        assert app_web._render_background_sources(130, "Vinted", ["Vinted"]) == []
+
+    variants = app_web._background_query_variants("pantalon Nike Trail")
+    assert variants == [
+        "pantalon Nike Trail", "Nike trail pants", "Nike trail trousers",
+        "Nike ACG pants", "Nike Phenom Elite pants",
+    ], variants
+
+    good = sample_results(1)[0]
+    good.update(titre="Nike ACG Dawn Range Running Pants", lien="https://example.com/good")
+    bad = sample_results(1)[0]
+    bad.update(titre="Nike Pegasus Trail Running Shoes", lien="https://example.com/bad")
+    with patch("app_web.rechercher_multi_marketplaces", return_value=[good, bad]) as variant_search:
+        filtered = app_web._render_live_ebay_results("pantalon Nike Trail", 500)
+    assert variant_search.call_count == 5
+    assert [item["lien"] for item in filtered] == ["https://example.com/good"], filtered
+
     client = app.test_client()
     csrf = _boot(client)
 
