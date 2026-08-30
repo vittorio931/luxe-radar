@@ -88,6 +88,16 @@ _NON_FOOTWEAR_TYPES = frozenset({
     "sac", "ceinture", "echarpe", "gants", "debardeur", "brassiere",
 })
 
+_FOOTWEAR_TYPES = frozenset({"baskets", "chaussures"})
+_FOOTWEAR_PACKAGING_PATTERN = re.compile(
+    r"(?<![a-z0-9])(?:boite|boites|box|boxes|dustbag|dust bag)"
+    r"(?:\s+(?:a|de|pour))?\s+(?:chaussure|chaussures|shoe|shoes|sneaker|sneakers)(?![a-z0-9])"
+)
+_FOOTWEAR_ACCESSORY_PATTERN = re.compile(
+    r"(?<![a-z0-9])(?:keychain|key chain|porte cle|porte cles|charm|miniature)"
+    r"(?![a-z0-9])"
+)
+
 # Une seule expression compilée remplace plusieurs dizaines de ``re.search``
 # par offre pour les modèles chaussures connus (Samba, AF1, P-6000...).
 _NON_FOOTWEAR_ALIASES = tuple(dict.fromkeys(
@@ -198,6 +208,17 @@ def evaluate_offer(intent_or_query, offer: dict) -> QualityResult:
             score += 15.0
         elif not intent.reference_token:
             hard_failures.append("categorie absente du titre")
+        # « basket » peut désigner une chaussure en français mais aussi figurer
+        # dans le nom d'un sac. Une famille explicitement incompatible ou un
+        # emballage de chaussures ne doit jamais valider une recherche footwear.
+        if intent.product_type in _FOOTWEAR_TYPES:
+            conflicting_type = _explicit_non_footwear_type(title_fold)
+            if conflicting_type:
+                hard_failures.append(f"categorie incompatible avec chaussure: {conflicting_type}")
+            if _FOOTWEAR_PACKAGING_PATTERN.search(title_fold):
+                hard_failures.append("emballage de chaussures")
+            if _FOOTWEAR_ACCESSORY_PATTERN.search(title_fold):
+                hard_failures.append("accessoire miniature, pas une chaussure")
 
     # --- Couleur / sexe / matière (soft) ----------------------------------------
     if intent.color:

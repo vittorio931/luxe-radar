@@ -1,12 +1,12 @@
-const CACHE = 'luxe-radar-shell-v399-zero-refresh';
+const CACHE = 'luxe-radar-shell-v400-image-persistence';
 const SHELL = [
-  '/static/app.css?v=20260829-399',
-  '/static/app.js?v=20260829-399',
-  '/static/risk.js?v=20260829-399',
+  '/static/app.css?v=20260830-400',
+  '/static/app.js?v=20260830-400',
+  '/static/risk.js?v=20260830-400',
   '/static/app-icon.svg',
-  '/static/app-icon-192.png?v=20260829-399',
-  '/static/app-icon-512.png?v=20260829-399',
-  '/static/manifest.webmanifest?v=20260829-399',
+  '/static/app-icon-192.png?v=20260830-400',
+  '/static/app-icon-512.png?v=20260830-400',
+  '/static/manifest.webmanifest?v=20260830-400',
   '/static/offline.html',
   '/static/offline.css',
   '/static/offline.js'

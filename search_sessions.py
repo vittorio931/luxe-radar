@@ -159,6 +159,15 @@ def save_search_session(
                     now,
                 ),
             )
+            # Conserver un historique utile sans croissance infinie : les 50
+            # recherches les plus récentes de chaque navigateur suffisent à la
+            # réutilisation instantanée et correspondent à l'historique UI.
+            connection.execute(
+                "DELETE FROM search_sessions WHERE owner=? AND token NOT IN ("
+                "SELECT token FROM search_sessions WHERE owner=? "
+                "ORDER BY updated_at DESC LIMIT 50)",
+                (str(owner or ""), str(owner or "")),
+            )
             connection.commit()
         finally:
             connection.close()

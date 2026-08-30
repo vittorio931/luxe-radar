@@ -67,7 +67,15 @@ _EXTRA_TYPE_ALIASES = {
     "debardeur": ("debardeur", "debardeurs", "tank top", "tanktop", "singlet"),
     "brassiere": ("brassiere", "brassieres", "bra", "sports bra", "sport bra", "soutien gorge", "soutien-gorge"),
     "baskets": ("basket", "baskets", "sneaker", "sneakers", "trainer", "trainers", "kicks"),
-    "chaussures": ("chaussure", "chaussures", "shoe", "shoes", "running shoe", "running shoes", "loafer", "loafers", "boot", "boots", "sandal", "sandals", "mule", "mules"),
+    # Une recherche générique « chaussures » doit aussi retrouver les annonces
+    # publiées comme sneakers/trainers/baskets. Le canonical « baskets » reste
+    # utile quand l'utilisateur emploie ce terme plus précis, mais les deux
+    # familles partagent volontairement leurs synonymes de chaussure.
+    "chaussures": (
+        "chaussure", "chaussures", "shoe", "shoes", "running shoe", "running shoes",
+        "basket", "baskets", "sneaker", "sneakers", "trainer", "trainers", "kicks",
+        "loafer", "loafers", "boot", "boots", "sandal", "sandals", "mule", "mules",
+    ),
     "tee-shirt": ("t shirt", "tshirt", "tee shirt", "tee", "t-shirts"),
 }
 

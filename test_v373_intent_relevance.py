@@ -77,6 +77,13 @@ with tempfile.TemporaryDirectory() as tmp:
         ('pantalon Nike Trail', 'Nike Storm-FIT ACG trousers', True),
         ('pantalon Nike Trail', 'Nike ACG hoodie', False),
         ('pantalon Nike Trail', 'Nike Pegasus Trail shoes', False),
+        # Une catégorie chaussures générique couvre les libellés internationaux
+        # sans accepter les sacs « Basket » ni les emballages/accessoires.
+        ('chaussure Balenciaga', 'Balenciaga Triple S Sneakers', True),
+        ('chaussure Balenciaga', 'Balenciaga Track Trainers', True),
+        ('chaussure Balenciaga', 'Balenciaga Bistro Basket Sac XXS', False),
+        ('chaussure Balenciaga', 'Boite a chaussures Balenciaga', False),
+        ('chaussure Balenciaga', 'Balenciaga Alaska Boot Keychain', False),
     ]
     for query, titre, want in cases:
         got = evaluate_offer(query, offer(titre, query)).accepted
@@ -147,6 +154,25 @@ with tempfile.TemporaryDirectory() as tmp:
     assert 'Nike Phenom Elite Running Pants' in semantic_titles
     assert 'Nike ACG hoodie' not in semantic_titles
     assert 'Nike Pegasus Trail shoes' not in semantic_titles
+
+    # Le catalogue global doit réutiliser les annonces anglaises quand la
+    # recherche utilisateur demande la catégorie générique en français.
+    footwear = [
+        offer('Balenciaga Triple S Sneakers', 'Balenciaga sneakers', i=20),
+        offer('Balenciaga Track Trainers', 'Balenciaga trainers', i=21),
+        offer('Balenciaga Bistro Basket Sac XXS', 'Balenciaga sac', i=22),
+    ]
+    _upsert(db3, [('Balenciaga sneakers', footwear[:1]),
+                  ('Balenciaga trainers', footwear[1:2]),
+                  ('Balenciaga sac', footwear[2:])])
+    footwear_titles = {
+        str(item.get('titre') or '')
+        for item in index_engine.search('chaussure Balenciaga', path=db3, limit=500).results
+    }
+    assert footwear_titles == {
+        'Balenciaga Triple S Sneakers',
+        'Balenciaga Track Trainers',
+    }, footwear_titles
 
     # --- RÃ©fÃ©rence produit : pas de rejet abusif --------------------------------
     db4 = base / 'ref.sqlite3'

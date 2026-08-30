@@ -60,7 +60,7 @@ def _parse_intent(query):
 
 app = Flask(__name__)
 APP_VERSION = "3.8.1"
-ASSET_VERSION = "20260829-399"
+ASSET_VERSION = "20260830-400"
 IS_PRODUCTION = os.environ.get("LUXE_RADAR_ENV", "development").lower() == "production"
 IS_RENDER_RUNTIME = bool(
     os.environ.get("RENDER")
@@ -81,7 +81,7 @@ app.config.update(
     SESSION_COOKIE_HTTPONLY=True,
     SESSION_COOKIE_SAMESITE="Lax",
     SESSION_COOKIE_SECURE=IS_PRODUCTION or os.environ.get("LUXE_RADAR_HTTPS", "").lower() in {"1", "true", "yes"},
-    PERMANENT_SESSION_LIFETIME=timedelta(hours=12),
+    PERMANENT_SESSION_LIFETIME=timedelta(days=7),
 )
 logging.basicConfig(level=logging.INFO)
 
@@ -533,12 +533,14 @@ if IS_RENDER_RUNTIME:
     # suffisent pour A -> B -> A et bornent fortement les pics mémoire.
     MAX_CACHED_SEARCHES = min(MAX_CACHED_SEARCHES, 3)
 # V4.1 : les tokens de recherche survivent aux restarts Gunicorn via SQLite.
-# 30 à 60 minutes, nettoyés périodiquement en arrière-plan du cache RAM.
+# Sept jours par défaut : une recherche déjà effectuée reste réutilisable sans
+# nouveau scan après fermeture/réouverture du navigateur (hors redéploiement du
+# disque éphémère Render). Le cache RAM demeure court et borné.
 SEARCH_SESSION_TTL_SECONDS = _bounded_env_int(
     "LUXE_RADAR_SEARCH_SESSION_TTL_MINUTES",
-    45,
-    30,
+    7 * 24 * 60,
     60,
+    30 * 24 * 60,
 ) * 60
 _SESSION_DISK_CLEANUP_EVERY_SECONDS = 300
 
@@ -1046,7 +1048,7 @@ def _drain_search_session_persist(token):
             app.logger.warning("Session de recherche non persistée: %s", token, exc_info=True)
 
 
-def _persist_search_session(entry, token, owner):
+def _persist_search_session(entry, token, owner, *, force_sync=False):
     """Programme l'upsert SQLite sans bloquer le premier rendu ni le scroll."""
     if not token:
         return
@@ -1058,6 +1060,15 @@ def _persist_search_session(entry, token, owner):
         pass
     try:
         payload = _search_session_payload(entry, token, owner)
+        if force_sync:
+            # Annuler un ancien snapshot encore en file. Si le writer l'a déjà
+            # pris, le verrou transactionnel de search_sessions garantit que
+            # cet état terminal sera écrit après lui et restera le dernier.
+            with _session_persist_lock:
+                _session_persist_latest.pop(token, None)
+            search_sessions.save_search_session(**payload)
+            _clean_sessions_disk()
+            return
         # Les petits états coûtent quelques millisecondes et restent synchrones:
         # cela garantit immédiatement le token en cas de restart. Seuls les
         # gros catalogues, responsables du délai visible, passent au writer.
@@ -1474,6 +1485,7 @@ def _complete_progressive_source(token, source, additions, reference, strict, ow
     """Fusion atomique d'une source progressive terminée."""
     result = None
     snapshot = None
+    terminal_persisted = False
     with _cache_lock:
         _clean_cache()
         entry = _search_cache.get(token)
@@ -1513,14 +1525,21 @@ def _complete_progressive_source(token, source, additions, reference, strict, ow
             entry["generation"] = int(entry.get("generation", 0)) + 1
         snapshot = dict(entry)
         result = (len(existing), len(results), bool(pending))
+        if not pending:
+            # Garder le verrou cache jusqu'au commit terminal : /status ne peut
+            # ainsi annoncer pending=false avant que le restart soit sûr.
+            _persist_search_session(snapshot, token, owner, force_sync=True)
+            terminal_persisted = True
     if result is not None and snapshot is not None:
-        _persist_search_session(snapshot, token, owner)
+        if not terminal_persisted:
+            _persist_search_session(snapshot, token, owner)
     return result
 
 
 def _fail_progressive_source(token, source, owner):
     ended = False
     snapshot = None
+    terminal_persisted = False
     with _cache_lock:
         entry = _search_cache.get(token)
         if entry is None or entry.get("cancelled"):
@@ -1536,8 +1555,12 @@ def _fail_progressive_source(token, source, owner):
         entry["pending"] = bool(entry["pending_sources"])
         ended = not entry["pending"]
         snapshot = dict(entry)
+        if ended:
+            _persist_search_session(snapshot, token, owner, force_sync=True)
+            terminal_persisted = True
     if snapshot is not None:
-        _persist_search_session(snapshot, token, owner)
+        if not terminal_persisted:
+            _persist_search_session(snapshot, token, owner)
     if ended:
         _log_search_summary(token, source, 0.0)
 
@@ -2407,7 +2430,9 @@ def _expand_in_background(token, owner, target, query, price, page_state,
             and not bool(entry.get("discovery_has_more", True))
         )
         persist_snapshot = dict(entry)
-    _persist_search_session(persist_snapshot, token, owner)
+        # Comme pour la fin du pipeline initial, ne rendre la vague « idle »
+        # qu'une fois ses curseurs durablement enregistrés.
+        _persist_search_session(persist_snapshot, token, owner, force_sync=True)
 
 
 def _expand_search_once(token, owner, marketplace="Toutes"):
