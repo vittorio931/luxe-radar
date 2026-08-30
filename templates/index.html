@@ -39,7 +39,10 @@
 <a class="skip-link" href="#main-content">Aller au contenu principal</a>
 <div class="app-shell">
   <aside class="sidebar">
-    <div class="brand"><span class="brand-mark">LR</span><span>LUXE <em>RADAR</em></span></div>
+    <div class="brand site-brand">
+      <span class="brand-logo-frame" aria-hidden="true"><img class="brand-logo" src="{{ url_for('static', filename='luxe-radar-logo.png', v=asset_version) }}" alt=""></span>
+      <span class="sr-only">LUXE RADAR</span>
+    </div>
     <nav class="nav" aria-label="Navigation principale">
       <button class="nav-button active" data-view="dashboard"><span class="nav-icon">⌂</span><span data-i18n="nav.dashboard">Vue d'ensemble</span></button>
       <button class="nav-button" data-view="radar"><span class="nav-icon">⌖</span><span data-i18n="nav.radar">Radar</span></button>
