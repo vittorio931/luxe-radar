@@ -195,9 +195,11 @@ def security_headers(response):
     nonce = getattr(g, "csp_nonce", "")
     response.headers["Content-Security-Policy"] = (
         "default-src 'self'; "
-        f"script-src 'self' 'nonce-{nonce}'; "
+        f"script-src 'self' 'nonce-{nonce}' https://pagead2.googlesyndication.com; "
         "style-src 'self'; img-src 'self' https: http: data:; "
-        "connect-src 'self'; font-src 'self'; media-src 'self'; "
+        "connect-src 'self' https://pagead2.googlesyndication.com https://googleads.g.doubleclick.net; "
+        "font-src 'self'; media-src 'self'; "
+        "frame-src https://googleads.g.doubleclick.net https://*.google.com; "
         "manifest-src 'self'; worker-src 'self'; object-src 'none'; "
         "base-uri 'none'; frame-ancestors 'none'; form-action 'self'"
     )
@@ -302,6 +304,12 @@ def robots_txt():
         f"Sitemap: {url_for('sitemap_xml', _external=True)}",
         "",
     ))
+    return Response(body, content_type="text/plain; charset=utf-8", headers={"Cache-Control": "public, max-age=3600"})
+
+
+@app.get("/ads.txt")
+def ads_txt():
+    body = "google.com, pub-4965744643154588, DIRECT, f08c47fec0942fa0\n"
     return Response(body, content_type="text/plain; charset=utf-8", headers={"Cache-Control": "public, max-age=3600"})
 
 
