@@ -24,6 +24,9 @@ def _tokens(text: str) -> list[str]:
 # Alias manuels : ils servent de garde-fou pour les marques qui ont des formes
 # courtes ou très utilisées. Le fuzzy complète cette liste, il ne la remplace pas.
 BRAND_ALIASES = {
+    # Marque de sportswear/football : absente de l'ancien catalogue de
+    # modèles, elle doit tout de même être comprise comme une marque exacte.
+    "Fourteen": ("fourteen", "fourteen sportswear", "fourteen sport"),
     "Under Armour": ("under armour", "underarmour", "ua"),
     "On": ("on", "on running", "on-running", "on cloud", "oncloud"),
     "Columbia": ("columbia", "columbia sportswear"),
@@ -97,6 +100,11 @@ TYPE_ALIASES = {
     "polo": ("polo",),
     "chemise": ("chemise", "shirt", "button down", "button-down", "overshirt"),
     "brassiere": ("brassiere", "brassieres", "bra", "sports bra", "sport bra", "soutien gorge", "soutien-gorge"),
+    "maillot": (
+        "maillot", "maillots", "jersey", "jerseys", "football jersey",
+        "soccer jersey", "football shirt", "soccer shirt", "home shirt",
+        "away shirt", "third shirt", "replica shirt", "football kit",
+    ),
     "cargo": ("cargo",),
 }
 
@@ -342,16 +350,22 @@ def understand_query(query: str) -> SearchUnderstanding:
     if not original:
         return SearchUnderstanding(original="", canonical="", corrected=False, confidence=1.0, corrections=())
 
+    tokens = _tokens(original)
+    expanded_tokens, early_compound_fixes = _expand_compound_brand_tokens(tokens)
     # Les références produit (DM4652-040, etc.) ne doivent jamais être passées
-    # dans un correcteur fuzzy.
-    if re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._/-]{3,}", original) and any(ch.isdigit() for ch in original):
+    # dans un correcteur fuzzy. Exception : OnCloud5/OnCloudmonster sont des
+    # formes collées reconnues explicitement, pas des SKU inconnus.
+    if (
+        not early_compound_fixes
+        and re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._/-]{3,}", original)
+        and any(ch.isdigit() for ch in original)
+    ):
         return SearchUnderstanding(original, original, False, 1.0, ())
 
-    tokens = _tokens(original)
     corrections = []
     confidence = 1.0
 
-    tokens, compound_fixes = _expand_compound_brand_tokens(tokens)
+    tokens, compound_fixes = expanded_tokens, early_compound_fixes
     if compound_fixes:
         corrections.extend(compound_fixes)
         confidence = min(confidence, 0.93)

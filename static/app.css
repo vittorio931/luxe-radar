@@ -872,3 +872,5 @@ aside.sidebar>.pro-sidebar-cta:before{content:"";position:absolute;inset:-3px;z-
   .brand-logo{width:72px!important;height:72px!important;left:-7px!important;top:-16px!important}
   .sidebar .nav{flex:1 1 auto!important;min-width:0!important;width:auto!important}
 }
+
+@media(max-width:760px){.sidebar .nav{justify-content:flex-start!important;overflow-x:auto!important;overflow-y:hidden!important}aside.sidebar .nav>.nav-button{flex:0 0 52px!important;width:52px!important;min-width:52px!important}}

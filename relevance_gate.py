@@ -19,6 +19,7 @@ import unicodedata
 
 from search_intent import (
     COLOR_ALIASES,
+    COUNTRY_ALIASES,
     GENDER_ALIASES,
     LINE_ALIASES,
     MATTER_ALIASES,
@@ -34,6 +35,12 @@ from search_intent import (
 _NIKE_TRAIL_PANTS_FAMILY = (
     "trail", "trail running", "acg", "all conditions gear", "dawn range",
     "phenom elite", "trail repel", "storm fit", "storm-fit",
+)
+
+_FOURTEEN_FASHION_PATTERN = re.compile(
+    r"(?<![a-z0-9])(?:shirt|tshirt|t shirt|tee|jersey|maillot|hoodie|sweat|"
+    r"jacket|veste|coat|pants|pantalon|shorts|short|cap|casquette|clothing|"
+    r"sportswear|apparel|fashion)(?![a-z0-9])"
 )
 
 
@@ -160,6 +167,10 @@ def evaluate_offer(intent_or_query, offer: dict) -> QualityResult:
             score += 25.0
         elif not (intent.is_reference or intent.reference_token):
             hard_failures.append("marque absente du titre")
+        if intent.brand == "Fourteen" and brand_match:
+            declared_brand = _fold(str(offer.get("marque") or offer.get("brand") or ""))
+            if declared_brand != "fourteen" and not _FOURTEEN_FASHION_PATTERN.search(title_fold):
+                hard_failures.append("fourteen hors contexte mode")
 
     # --- Modèle exact (dur sauf requête-référence) ---------------------------
     if intent.model:
@@ -233,6 +244,19 @@ def evaluate_offer(intent_or_query, offer: dict) -> QualityResult:
         matter_match = any(_match_alias(title_fold, alias) for alias in MATTER_ALIASES.get(intent.matter, ()))
         if matter_match:
             score += 5.0
+
+    # --- Pays / sélection (dur) ---------------------------------------------
+    # Essentiel pour les maillots : une expansion internationale ne doit pas
+    # laisser un maillot France entrer dans une recherche Cameroun.
+    if getattr(intent, "country", None):
+        country_match = any(
+            _match_alias(title_fold, alias)
+            for alias in COUNTRY_ALIASES.get(intent.country, (intent.country,))
+        )
+        if country_match:
+            score += 20.0
+        else:
+            hard_failures.append("pays ou selection absent du titre")
 
     # --- Référence produit (soft, renforce le score sans rejeter) ---------------
     if intent.reference_token:

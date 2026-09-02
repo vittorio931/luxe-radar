@@ -173,6 +173,19 @@ def test_stops_on_empty_threshold():
         assert walked["new"] == 0
 
 
+def test_stops_immediately_on_repeated_non_empty_page():
+    """Une API qui répète sa dernière page ne doit pas être rappelée 3 fois."""
+    with _with_index_db() as db:
+        repeated = [_make_offer(1), _make_offer(2)]
+        fake = _FakeConnector("eBay", [repeated, repeated, repeated], max_pages=25)
+        with patch.object(collector, "get_available_connectors", return_value={"eBay": fake}):
+            summary = collector.collect_seed("Nike P-6000", 250, sources=["eBay"], path=db)
+        walked = summary["sources"]["eBay"]
+        assert walked["pages"] == 2, walked
+        assert walked["pages_detail"][-1]["repeated_page"] is True
+        assert walked["pages_detail"][-1]["has_more"] is False
+
+
 def test_known_keys_and_recent():
     with _with_index_db() as db:
         offers = [_make_offer(1), _make_offer(2)]

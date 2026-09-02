@@ -332,6 +332,16 @@ _TYPES_RECHERCHE_MULTI = {
         "aliases": {
             "maillot",
             "jersey",
+            "jerseys",
+            "football jersey",
+            "soccer jersey",
+            "football shirt",
+            "soccer shirt",
+            "home shirt",
+            "away shirt",
+            "third shirt",
+            "replica shirt",
+            "football kit",
         }
     },
     "ensemble": {
@@ -739,6 +749,24 @@ _ALIASES_MOTS_IMPORTANTS_MULTI = {
         "fog essentials",
         "essentials fear of god",
     ),
+    # Les annonces internationales emploient le nom anglais des sélections.
+    # Le filtre reste strict : un pays demandé doit être présent sous l'une
+    # de ses formes, ce qui évite de transformer la recherche en tous maillots.
+    "cameroun": ("cameroun", "cameroon"),
+    "maroc": ("maroc", "morocco"),
+    "algerie": ("algerie", "algeria"),
+    "cote": ("cote", "ivory"),
+    "ivoire": ("ivoire", "coast"),
+    "bresil": ("bresil", "brazil"),
+    "allemagne": ("allemagne", "germany"),
+    "espagne": ("espagne", "spain"),
+    "italie": ("italie", "italy"),
+    "argentine": ("argentine", "argentina"),
+    "angleterre": ("angleterre", "england"),
+    "belgique": ("belgique", "belgium"),
+    "japon": ("japon", "japan"),
+    "pays": ("pays", "netherlands"),
+    "bas": ("bas", "netherlands"),
 }
 
 

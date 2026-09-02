@@ -2,6 +2,7 @@
 
 from time import perf_counter, sleep
 from unittest.mock import patch
+from concurrent.futures import Future
 
 import app_web
 import index_engine
@@ -42,6 +43,15 @@ def main():
     assert saved and saved[-1]["token"] == token
     assert len(saved[-1]["state"]["results"]) == len(offers)
     print(f"SESSION: rendu en {response_time:.3f}s, 600 offres persistées en arrière-plan")
+
+    # Le contrat de l'indexeur expose maintenant sa Future : les workers de
+    # source peuvent confirmer l'écriture avant de marquer la recherche finie.
+    with patch.object(index_engine, "upsert_results", return_value=len(offers)) as upsert:
+        future = app_web._index_results_async(offers, "Adidas Samba")
+        assert isinstance(future, Future)
+        future.result(timeout=3)
+        assert upsert.call_count == 1
+    print("INDEX: confirmation d'écriture disponible avant clôture de source")
 
 
 if __name__ == "__main__":

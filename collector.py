@@ -25,6 +25,7 @@ Exemples CLI :
 import argparse
 import json
 import os
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from threading import Event, Lock, Thread
 from time import perf_counter, sleep, time
@@ -173,6 +174,9 @@ COLLECTOR_SEED_BUDGET_SECONDS = _env_float(
 COLLECTOR_IDLE_SECONDS = _env_float(
     "LUXE_RADAR_COLLECTOR_IDLE_SECONDS", 10.0 if COLLECTOR_ON_DEMAND_MODE else 60.0, 10.0, 3600.0)
 COLLECTOR_TRIGGER_WINDOW_SECONDS = _env_int("LUXE_RADAR_COLLECTOR_TRIGGER_WINDOW_SECONDS", 300, 30, 86400)
+COLLECTOR_SOURCE_WORKERS = _env_int(
+    "LUXE_RADAR_COLLECTOR_SOURCE_WORKERS", 4 if not _is_render_runtime() else 2, 1, 8
+)
 
 
 def _allowed_source_names() -> set[str]:
@@ -331,25 +335,43 @@ def collect_seed(query, price_max=None, *, sources: list[str] | None = None,
         "before": before,
     }
     started = perf_counter()
-    for connector in connectors:
+    # Une source lente ne doit plus retarder toutes les suivantes. Les sources
+    # sont marchées par petits groupes bornés ; chaque source conserve sa
+    # pagination séquentielle et ses cooldowns, tandis que SQLite/WAL arbitre
+    # les insertions courtes. Le collecteur reste totalement hors hot path.
+    worker_count = min(COLLECTOR_SOURCE_WORKERS, len(connectors))
+    for batch_start in range(0, len(connectors), worker_count):
         if perf_counter() - started >= budget:
             summary["budget_exceeded"] = True
-            log(f"[COLLECTOR] {query} | budget dépassé, arrêt avant {connector.name}")
             break
-        walked = _walk_source(
-            connector, query, price_max,
-            dry_run=dry_run, path=path, log=log,
-        )
-        summary["sources"][connector.name] = walked
-        summary["pages_walked"] += walked.get("pages", 0)
-        summary["raw"] += walked.get("raw", 0)
-        summary["parsed"] += walked.get("parsed", 0)
-        summary["relevant"] += walked.get("relevant", 0)
-        summary["rejected"] += walked.get("rejected", 0)
-        summary["new"] += walked.get("new", 0)
-        summary["duplicates"] += walked.get("duplicates", 0)
-        summary["blocked_pages"] += walked.get("blocked_pages", 0)
-        summary["errors"] += 1 if walked.get("error") else 0
+        batch = connectors[batch_start:batch_start + worker_count]
+        with ThreadPoolExecutor(max_workers=len(batch), thread_name_prefix="catalog-source") as executor:
+            futures = [
+                (connector, executor.submit(
+                    _walk_source, connector, query, price_max,
+                    dry_run=dry_run, path=path, log=log,
+                ))
+                for connector in batch
+            ]
+            for connector, future in futures:
+                try:
+                    walked = future.result()
+                except Exception as exc:  # garde-fou du coordinateur
+                    walked = {"source": connector.name, "error": str(exc)[:200]}
+                summary["sources"][connector.name] = walked
+                summary["pages_walked"] += walked.get("pages", 0)
+                summary["raw"] += walked.get("raw", 0)
+                summary["parsed"] += walked.get("parsed", 0)
+                summary["relevant"] += walked.get("relevant", 0)
+                summary["rejected"] += walked.get("rejected", 0)
+                summary["new"] += walked.get("new", 0)
+                summary["duplicates"] += walked.get("duplicates", 0)
+                summary["blocked_pages"] += walked.get("blocked_pages", 0)
+                summary["errors"] += 1 if walked.get("error") else 0
+        if perf_counter() - started >= budget and batch_start + worker_count < len(connectors):
+            summary["budget_exceeded"] = True
+            log(f"[COLLECTOR] {query} | budget dépassé après {len(summary['sources'])} source(s)")
+            break
     summary["duration_s"] = perf_counter() - started
     if not dry_run:
         summary["after"] = index_engine.count_query_offers(query, path=path)
@@ -450,6 +472,11 @@ def _walk_source(connector, query, price_max, *, dry_run=False, path=None, log=N
 
         parsed = len(items)
         known = index_engine.known_offer_keys(keys, query, path=path) if not dry_run else set()
+        # Certaines APIs renvoient leur dernière page pour tout offset trop
+        # grand au lieu d'une page vide. Dès qu'une page non vide est composée
+        # uniquement de clés déjà vues pendant cette marche, continuer ferait
+        # deux appels réseau inutiles (voire davantage avec un max_pages haut).
+        repeated_page = bool(keys) and all(key in seen_keys for key in keys)
         relevant = sum(1 for item in items if index_engine._catalog_accept(item, query))
         rejected = parsed - relevant
 
@@ -464,7 +491,7 @@ def _walk_source(connector, query, price_max, *, dry_run=False, path=None, log=N
         duplicates = parsed - new_count
 
         has_more = False
-        if paged and page < pages_total:
+        if paged and page < pages_total and not repeated_page:
             has_more = True
             if new_count == 0:
                 consecutive_empty += 1
@@ -497,7 +524,8 @@ def _walk_source(connector, query, price_max, *, dry_run=False, path=None, log=N
         summary["pages_detail"].append({
             "page": page, "raw": parsed, "parsed": parsed, "relevant": relevant,
             "rejected": rejected, "new": new_count, "duplicates": duplicates,
-            "has_more": has_more, "blocked": False, "latency_ms": latency_ms,
+            "has_more": has_more, "repeated_page": repeated_page,
+            "blocked": False, "latency_ms": latency_ms,
         })
         log(
             f"[COLLECTOR] {query} | {name} p{page}/{pages_total if paged else 1} "

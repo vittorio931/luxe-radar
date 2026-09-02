@@ -15,6 +15,7 @@ import inspect
 import os
 import pkgutil
 from pathlib import Path
+from threading import RLock
 
 from marketplaces.connectors.base import MarketplaceConnector
 from marketplaces.connectors.quality_filters import filter_results
@@ -22,6 +23,8 @@ from marketplaces.connectors.universal import load_configured_connectors
 
 _CONNECTORS_DIR = Path(__file__).resolve().parent / "marketplaces" / "connectors"
 _SKIP_MODULES = {"__init__", "base", "quality_filters", "universal"}
+_CACHE_LOCK = RLock()
+_RAW_CONNECTORS_CACHE = None
 
 
 def _debug(message):
@@ -92,12 +95,26 @@ class _QualityProxy:
 
 
 def _all_raw_connectors():
-    found = _native_connectors()
-    for connector in load_configured_connectors():
-        name = str(getattr(connector, "name", "") or "").strip()
-        if name and name not in found:
-            found[name] = connector
-    return found
+    global _RAW_CONNECTORS_CACHE
+    with _CACHE_LOCK:
+        if _RAW_CONNECTORS_CACHE is None:
+            found = _native_connectors()
+            for connector in load_configured_connectors():
+                name = str(getattr(connector, "name", "") or "").strip()
+                if name and name not in found:
+                    found[name] = connector
+            _RAW_CONNECTORS_CACHE = found
+        # Les appelants reçoivent une vue isolée, mais les instances sont
+        # réutilisées : plus de relecture des 1 200 définitions ni de
+        # réinstanciation de toutes les classes à chaque page de scroll.
+        return dict(_RAW_CONNECTORS_CACHE)
+
+
+def invalidate_connector_cache():
+    """Invalide explicitement le registre après une modification de config."""
+    global _RAW_CONNECTORS_CACHE
+    with _CACHE_LOCK:
+        _RAW_CONNECTORS_CACHE = None
 
 
 def _aliases(name, connector):

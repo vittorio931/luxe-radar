@@ -33,11 +33,11 @@ import index_engine
 import learn
 import search_sessions
 
-from connector_registry import get_available_connectors
-from marketplaces.connectors import get_connector
+from connector_registry import get_available_connectors, get_connector
 from marketplaces.catalog import get_definition, get_definitions, get_sites
 from radar_engine import rechercher_multi_marketplaces, _cle_unique_multi, _selection_diversifiee, _analyser_resultat_multi
 from image_similarity import MAX_IMAGE_BYTES, download_listing_image, image_feature, similarity
+from visual_query import VisualQueryError, analyse_visual_query, vision_ready
 from search_understanding import understand_query, suggest_queries, canonicalize_search_query
 from relevance_gate import evaluate_offer
 from marketplaces.connectors.universal import discover_catalog_wave
@@ -64,7 +64,7 @@ def _parse_intent(query):
 
 app = Flask(__name__)
 APP_VERSION = "3.8.1"
-ASSET_VERSION = "20260830-402"
+ASSET_VERSION = "20260831-404"
 IS_PRODUCTION = os.environ.get("LUXE_RADAR_ENV", "development").lower() == "production"
 IS_RENDER_RUNTIME = bool(
     os.environ.get("RENDER")
@@ -524,7 +524,7 @@ INDEX_TOKEN_CACHE_LIMIT = min(
 )
 DIVERSIFIED_HEAD_SIZE = 200
 MAX_BATCH_SIZE = 500
-IMAGE_COMPARE_LIMIT = _bounded_env_int("LUXE_RADAR_IMAGE_COMPARE_LIMIT", 96, 16, 120)
+IMAGE_COMPARE_LIMIT = _bounded_env_int("LUXE_RADAR_IMAGE_COMPARE_LIMIT", 120, 24, 160)
 CACHE_TTL_SECONDS = (20 if IS_RENDER_RUNTIME else 30) * 60
 MAX_CACHED_SEARCHES = _bounded_env_int(
     "LUXE_RADAR_MAX_CACHED_SEARCHES",
@@ -590,7 +590,11 @@ _LUXURY_UNIVERSE_QUERIES = (
 # Render Free doit rester un processus HTTP léger. Les connecteurs navigateur
 # et les vagues de rappel profondes peuvent dépasser ses 512 Mo lorsqu'une
 # seconde recherche démarre pendant leur exécution.
-_RENDER_HTTP_SEARCH_SOURCES = frozenset({"eBay", "SSENSE", "The Outnet"})
+_RENDER_HTTP_SEARCH_SOURCES = frozenset({
+    # Connecteurs HTTP dédiés/publics : aucun Chromium dans le premier plan.
+    "eBay", "SSENSE", "The Outnet", "Kith", "ASOS", "Zalando",
+    "Cdiscount", "67behaviour", "AliExpress",
+})
 RENDER_BACKGROUND_ENRICH_TARGET = _bounded_env_int(
     "LUXE_RADAR_RENDER_ENRICH_TARGET", 1000, 200, 3000
 )
@@ -616,6 +620,16 @@ _TYPE_QUERY_VARIANTS = {
     "gilet": ("vest", "bodywarmer"),
     "jogging": ("track pants", "sweatpants"),
     "jean": ("jeans", "denim pants"),
+    "maillot": ("football jersey", "football shirt", "soccer jersey"),
+}
+
+_FOOTBALL_COUNTRY_ALIASES = {
+    "cameroun": "Cameroon", "maroc": "Morocco", "algerie": "Algeria",
+    "senegal": "Senegal", "cote d ivoire": "Ivory Coast",
+    "bresil": "Brazil", "allemagne": "Germany", "espagne": "Spain",
+    "italie": "Italy", "argentine": "Argentina", "angleterre": "England",
+    "belgique": "Belgium", "japon": "Japan", "pays bas": "Netherlands",
+    "portugal": "Portugal", "france": "France", "mexique": "Mexico",
 }
 
 
@@ -633,7 +647,14 @@ def _render_background_sources(index_total, selected_platform, active_marketplac
     selected = str(selected_platform or "Toutes")
     active = set(active_marketplaces or ())
     if selected == "Toutes":
-        return [name for name in ("eBay", "SSENSE", "The Outnet") if name in active]
+        # eBay donne le volume initial ; les places suivantes doivent enrichir
+        # la recherche avec du retail, du luxe et d'autres marketplaces. Six
+        # tâches maximum restent bornées par l'executor progressif global.
+        preferred = (
+            "ASOS", "Zalando", "SSENSE", "The Outnet", "Kith",
+            "Cdiscount", "67behaviour", "AliExpress", "eBay",
+        )
+        return [name for name in preferred if name in active][:6]
     if selected in _RENDER_HTTP_SEARCH_SOURCES and selected in active:
         return [selected]
     return []
@@ -644,7 +665,60 @@ def _background_query_variants(query):
     query = str(query or "").strip()
     variants = [query]
     intent = _parse_intent(query)
-    if intent is None or not intent.brand or not intent.product_type:
+    if intent is None:
+        return variants
+
+    # Un même modèle est publié sous plusieurs graphies selon les pays et
+    # les vendeurs. Ces variantes restent toutes ancrées sur la marque et le
+    # modèle exact ; le quality gate final réévalue chaque carte contre la
+    # requête originale, donc aucun autre modèle ne profite de l'élargissement.
+    if intent.brand == "On" and intent.model == "Cloud 5":
+        variants.extend((
+            "On Running Cloud 5",
+            "On Cloud5",
+            "Cloud 5 On Running",
+            "On Cloud 5 Waterproof",
+        ))
+        return list(dict.fromkeys(value for value in variants if value))[:5]
+    if intent.brand and intent.model:
+        compact_model = str(intent.model).replace(" ", "")
+        variants.extend((
+            f"{intent.brand} {intent.model}",
+            f"{intent.brand} {compact_model}",
+        ))
+        return list(dict.fromkeys(value for value in variants if value))[:3]
+
+    # "Fourteen" est aussi un nombre anglais. Une requête brute ramène des
+    # livres et objets parlant de quatorze éléments ; les ancres mode gardent
+    # la recherche dans le domaine voulu tout en couvrant plusieurs produits.
+    if intent.brand == "Fourteen" and not intent.product_type:
+        return [
+            "Fourteen shirt", "Fourteen jersey", "Fourteen jacket",
+            "Fourteen hoodie", "Fourteen sportswear",
+        ]
+
+    # Les maillots sont souvent publiés en anglais, surtout pour les équipes
+    # nationales. On traduit uniquement des entités pays sûres et on conserve
+    # toujours le type football dans chaque variante.
+    if intent.product_type == "maillot" and intent.line == "soccer":
+        folded = index_engine.canonical_query(query)
+        country = next(
+            (english for french, english in _FOOTBALL_COUNTRY_ALIASES.items()
+             if french in folded),
+            "",
+        )
+        anchor = country or str(intent.brand or "").strip()
+        if anchor:
+            variants.extend((
+                f"{anchor} football jersey",
+                f"{anchor} football shirt",
+                f"{anchor} soccer jersey",
+            ))
+        else:
+            variants.extend(("football jersey", "football shirt", "soccer jersey"))
+        return list(dict.fromkeys(value for value in variants if value))[:5]
+
+    if not intent.brand or not intent.product_type:
         return variants
 
     anchor = " ".join(
@@ -760,10 +834,10 @@ def _progressive_source_order(query, active_marketplaces):
         "SSENSE", "Spartoo", "Grailed", "1688",
     ]
     fashion_priority = [
-        "eBay", "Vinted", "SSENSE", "Grailed", "ASOS", "Zalando",
+        "eBay", "SSENSE", "The Outnet", "Kith", "Vinted", "Grailed", "ASOS", "Zalando",
         "AliExpress", "67behaviour",
-        "Rouje", "Represent", "Kith", "Laced", "End Clothing",
-        "Cettire", "The Outnet", "Galeries Lafayette", "La Redoute",
+        "Rouje", "Represent", "Laced", "End Clothing",
+        "Cettire", "Galeries Lafayette", "La Redoute",
         "Nike", "Adidas", "Puma", "Converse", "Veja Store",
         "Courir", "Spartoo", "Footshop", "JD Sports", "Cdiscount", "DHgate",
         "i-Run", "Direct Running", "Alltricks", "Deporvillage",
@@ -781,10 +855,13 @@ def _progressive_source_order(query, active_marketplaces):
         "21RUN", "Running Point", "MisterRunning", "Hardloop", "Ekosport",
         "Cdiscount", "DHgate", "1688",
     ]
-    if brand in _RUNNING_BRANDS or product_type == "chaussures":
-        preferred = running_priority
-    elif brand in _LUXURY_FASHION_BRANDS:
+    # Les requêtes luxe doivent consulter les outlets/promotions HTTP fiables
+    # avant les navigateurs lents. Les sources bloquées ne figurent pas dans
+    # ``active`` et ne peuvent donc jamais consommer un worker.
+    if brand in _LUXURY_FASHION_BRANDS:
         preferred = fashion_priority
+    elif brand in _RUNNING_BRANDS or product_type == "chaussures":
+        preferred = running_priority
     else:
         preferred = generic_priority
     active = list(active_marketplaces or [])
@@ -965,16 +1042,16 @@ def _start_background_workers():
 
 def _index_results_async(results, query):
     if not results or not query or not index_engine.index_enabled():
-        return
+        return None
     snapshot = [dict(item) for item in results if isinstance(item, dict)]
     if not snapshot:
-        return
+        return None
     def _write():
         try:
             index_engine.upsert_results(snapshot, query)
         except Exception as exc:
             app.logger.warning("Index V3.6 indisponible: %s", str(exc)[:180])
-    _index_executor.submit(_write)
+    return _index_executor.submit(_write)
 
 # Un seul navigateur Playwright lourd à la fois sur le même process. Les deux
 # workers progressifs peuvent continuer à faire du HTTP en parallèle.
@@ -1005,7 +1082,7 @@ MARQUES = [
     ("Acne Studios", 40), ("Off-White", 40), ("Gucci", 50),
     ("Prada", 50), ("Balenciaga", 50), ("Saint Laurent", 50),
     ("Dior", 50), ("Givenchy", 50), ("Fendi", 50), ("Valentino", 50),
-    ("Maison Margiela", 50), ("Amiri", 50),
+    ("Maison Margiela", 50), ("Amiri", 50), ("Fourteen", 25),
 ]
 
 
@@ -1463,7 +1540,10 @@ def _merge_progressive_results(existing, additions):
     return ranked
 
 
-_INDEX_COVERAGE_SOURCES = ("Vinted", "Grailed", "SSENSE", "Zalando", "The Outnet")
+_INDEX_COVERAGE_SOURCES = (
+    "Vinted", "Grailed", "AliExpress", "ASOS", "Zalando", "SSENSE",
+    "The Outnet", "Kith", "Cdiscount", "67behaviour",
+)
 
 
 def _supplement_index_marketplaces(query, results, *, price_max=None):
@@ -1734,12 +1814,31 @@ def _finish_progressive_source(token, query, price, source, reference, strict, o
             if source == "eBay" and _render_snapshot_mode():
                 return _render_live_ebay_results(query, price)
             source_limit = min(source_caps.get(source, 60), SEARCH_RESULT_LIMIT)
-            return rechercher_multi_marketplaces(
-                marque=query,
-                prix_max=price,
-                plateformes=[source],
-                limite=source_limit,
-            )
+            candidates = _background_query_variants(query)
+            # Chromium reste volontairement borné à deux graphies. Les
+            # connecteurs HTTP peuvent explorer jusqu'à cinq variantes sans
+            # bloquer le premier rendu, car cette fonction tourne en fond.
+            if source in {"Vinted", "Grailed"}:
+                candidates = candidates[:2]
+            merged = {}
+            for candidate_query in candidates:
+                additions = rechercher_multi_marketplaces(
+                    marque=candidate_query,
+                    prix_max=price,
+                    plateformes=[source],
+                    limite=source_limit,
+                )
+                for item in additions or []:
+                    if candidate_query != query:
+                        try:
+                            if not evaluate_offer(query, item).accepted:
+                                continue
+                        except Exception:
+                            continue
+                    merged.setdefault(_cle_unique_multi(item), item)
+                if len(merged) >= source_limit * 3:
+                    break
+            return list(merged.values())[:min(source_limit * 3, SEARCH_RESULT_LIMIT)]
 
         if source in {"Vinted", "Grailed"}:
             with _browser_progressive_semaphore:
@@ -1757,7 +1856,19 @@ def _finish_progressive_source(token, query, price, source, reference, strict, o
             network_elapsed = perf_counter() - network_started
         if not _progressive_task_allowed(token, source, owner):
             return
-        _index_results_async(additions, query)
+        index_future = _index_results_async(additions, query)
+        # Le premier rendu est déjà servi : attendre ici ne bloque que le
+        # worker de cette source. Ne jamais annoncer la recherche terminée ni
+        # persister son token final avant que l'index partagé ait confirmé les
+        # offres, sinon un restart juste à cet instant perdrait l'apprentissage.
+        if index_future is not None:
+            try:
+                index_future.result(timeout=20)
+            except Exception as exc:
+                app.logger.warning(
+                    "Confirmation index indisponible pour %s: %s",
+                    source, str(exc)[:180],
+                )
         state = _complete_progressive_source(
             token, source, additions, reference, strict, owner
         )
@@ -1881,7 +1992,7 @@ def _sorted_results(results, sort="relevance", marketplace="Toutes", price_min=N
     return sorted(filtered, key=keys.get(sort, keys["relevance"]))
 
 
-def _marketplace_coverage_head(results, head_size=50, per_source=5, max_sources=8):
+def _marketplace_coverage_head(results, head_size=50, per_source=8, max_sources=10):
     """Expose plusieurs sources en tête sans supprimer ni dupliquer d'offre.
 
     Le classement à l'intérieur de chaque marketplace reste intact. Seule une
@@ -1943,9 +2054,37 @@ def _cached_image_feature(url):
     return feature
 
 
+def _image_rank_candidates(results):
+    """Keep the strongest head, then sample the whole result set and its sources."""
+    eligible = [(index, item) for index, item in enumerate(results) if item.get("image")]
+    if len(eligible) <= IMAGE_COMPARE_LIMIT:
+        return [(index, item.get("image")) for index, item in eligible]
+    head_size = min(len(eligible), max(1, min(24, IMAGE_COMPARE_LIMIT // 3)))
+    chosen = eligible[:head_size]
+    chosen_indexes = {index for index, _item in chosen}
+    buckets = OrderedDict()
+    for index, item in eligible[head_size:]:
+        source = str(item.get("marketplace") or item.get("plateforme") or "Autre")
+        buckets.setdefault(source, []).append((index, item))
+    while len(chosen) < IMAGE_COMPARE_LIMIT and buckets:
+        for source in list(buckets):
+            bucket = buckets[source]
+            if not bucket:
+                buckets.pop(source, None)
+                continue
+            position = (len(bucket) - 1) // 2
+            candidate = bucket.pop(position)
+            if candidate[0] not in chosen_indexes:
+                chosen.append(candidate)
+                chosen_indexes.add(candidate[0])
+                if len(chosen) >= IMAGE_COMPARE_LIMIT:
+                    break
+    return [(index, item.get("image")) for index, item in chosen]
+
+
 def _rank_by_image(results, upload_feature):
-    """Compare at most 32 public listing thumbnails with bounded concurrent downloads."""
-    candidates = [(index, item.get("image")) for index, item in enumerate(results) if item.get("image")][:IMAGE_COMPARE_LIMIT]
+    """Compare a bounded, marketplace-balanced sample of listing thumbnails."""
+    candidates = _image_rank_candidates(results)
     compared = 0
 
     def compare(candidate):
@@ -2775,6 +2914,23 @@ def rank_results_by_image(token):
     return jsonify({"results": page["results"], "next_offset": page["next_offset"], "has_more": page["has_more"], "total": page["total"], "compared": compared})
 
 
+@app.post("/api/image-query")
+def image_query():
+    upload = request.files.get("image")
+    allowed = {"image/jpeg", "image/png", "image/webp"}
+    if upload is None or upload.mimetype not in allowed:
+        return jsonify({"error": "Choisis une image JPEG, PNG ou WebP de 2 Mo maximum."}), 400
+    data = upload.stream.read(MAX_IMAGE_BYTES + 1)
+    try:
+        image_feature(data)  # validation Pillow complète avant tout appel externe
+        understood = analyse_visual_query(data, upload.mimetype)
+    except ValueError:
+        return jsonify({"error": "Choisis une image JPEG, PNG ou WebP de 2 Mo maximum."}), 400
+    except VisualQueryError as exc:
+        return jsonify({"error": str(exc)}), 503
+    return jsonify(understood)
+
+
 def _search_signature(recherche, prix_saisi, selected_platform, reference_saisie, reference_stricte):
     """Empreinte stable des entrées de recherche pour réutiliser le token de
     session (évite de re-frapper les marketplaces quand on change de page)."""
@@ -3215,6 +3371,7 @@ def _render_search_page(state, catalog_sites, active_marketplaces):
         mobile_request=_is_mobile_request(),
         subscription_plans=SUBSCRIPTION_PLANS,
         billing_ready=_billing_ready(),
+        vision_ready=vision_ready(),
         csrf_token=session["csrf_token"],
         csp_nonce=g.csp_nonce,
         learn_enabled=learn.LEARN_ENABLED,

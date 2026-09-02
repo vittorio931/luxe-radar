@@ -52,7 +52,12 @@ _EXTRA_TYPE_ALIASES = {
     "casquette": ("casquette", "casquettes", "cap", "caps", "baseball cap", "snapback", "casq"),
     "chaussettes": ("chaussette", "chaussettes", "sock", "socks"),
     "gilet": ("gilet", "gilets", "bodywarmer", "waistcoat", "sleeveless vest", "gilet sans manches"),
-    "maillot": ("maillot", "maillots", "jersey", "jerseys", "football shirt", "soccer jersey", "swimsuit", "maillot de bain"),
+    "maillot": (
+        "maillot", "maillots", "jersey", "jerseys", "football jersey",
+        "soccer jersey", "football shirt", "soccer shirt", "home shirt",
+        "away shirt", "third shirt", "replica shirt", "football kit",
+        "swimsuit", "maillot de bain",
+    ),
     "manteau": ("manteau", "manteaux", "overcoat", "parka", "trench", "trenchcoat", "raincoat"),
     "doudoune": ("doudoune", "doudounes", "puffer", "puffer jacket", "down jacket", "quilted jacket", "duvet"),
     "jean": ("jean", "jeans", "denim", "denim pants", "denim trousers"),
@@ -151,6 +156,29 @@ MATTER_ALIASES: dict[str, tuple[str, ...]] = {
     "goretex": ("goretex", "gore tex", "gore-tex"),
 }
 
+# Pays/sélections dont le nom français diffère du titre international.
+# Cette dimension reste volontairement fermée : elle sert de filtre dur pour
+# ne jamais renvoyer le maillot d'une autre équipe nationale.
+COUNTRY_ALIASES: dict[str, tuple[str, ...]] = {
+    "Cameroon": ("cameroun", "cameroon"),
+    "Morocco": ("maroc", "morocco"),
+    "Algeria": ("algerie", "algeria"),
+    "Senegal": ("senegal",),
+    "Ivory Coast": ("cote d ivoire", "ivory coast"),
+    "Brazil": ("bresil", "brazil"),
+    "Germany": ("allemagne", "germany"),
+    "Spain": ("espagne", "spain"),
+    "Italy": ("italie", "italy"),
+    "Argentina": ("argentine", "argentina"),
+    "England": ("angleterre", "england"),
+    "Belgium": ("belgique", "belgium"),
+    "Japan": ("japon", "japan"),
+    "Netherlands": ("pays bas", "netherlands", "holland"),
+    "Portugal": ("portugal",),
+    "France": ("france",),
+    "Mexico": ("mexique", "mexico"),
+}
+
 # Clés de MARQUES_MODELES qui décrivent une GAMME, pas un modèle unique.
 _LINE_MODEL_KEYS = {"Trail", "Miler", "Phenom Elite", "Dri-FIT ADV"}
 
@@ -166,6 +194,7 @@ class SearchIntent:
     color: str | None = None
     gender: str | None = None
     matter: str | None = None
+    country: str | None = None
     is_reference: bool = False
     reference_token: str | None = None
     # Tokens significatifs pour la récupération de candidats (FTS/LIKE).
@@ -182,6 +211,7 @@ class SearchIntent:
             "color": self.color,
             "gender": self.gender,
             "matter": self.matter,
+            "country": self.country,
             "is_reference": self.is_reference,
         }
 
@@ -317,6 +347,7 @@ def parse_search_intent(query: str) -> SearchIntent:
     color, _c_alias = _find_canonical(COLOR_ALIASES, query_folded)
     gender, _g_alias = _find_canonical(GENDER_ALIASES, query_folded)
     matter, _m_alias = _find_canonical(MATTER_ALIASES, query_folded)
+    country, _country_alias = _find_canonical(COUNTRY_ALIASES, query_folded)
 
     # Token de référence libre (inconnu des modèles) : ex. ``DM4652-040`` dans
     # une requête mixte ``Nike DM4652-040``.
@@ -340,6 +371,8 @@ def parse_search_intent(query: str) -> SearchIntent:
         required.extend(_fold(line).split())
     if reference_token:
         required.append(reference_token)
+    if country:
+        required.extend(_fold(country).split())
     seen = set()
     required = tuple(tok for tok in required if len(tok) >= 2 and not (tok in seen or seen.add(tok)))[:8]
 
@@ -353,6 +386,7 @@ def parse_search_intent(query: str) -> SearchIntent:
         color=color,
         gender=gender,
         matter=matter,
+        country=country,
         is_reference=is_reference,
         reference_token=reference_token,
         required_tokens=required,

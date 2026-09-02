@@ -28,16 +28,30 @@ def _pixels(image, mode, size):
 
 
 def _colour_histogram(image):
-    """Histogramme RGB 4x4x4, peu sensible au cadrage et au fond."""
-    bins = [0.0] * 64
-    pixels = list(image.convert("RGB").resize((64, 64), Image.Resampling.BILINEAR).getdata())
-    for red, green, blue in pixels:
-        bins[(red // 64) * 16 + (green // 64) * 4 + (blue // 64)] += 1.0
+    """Histogramme HSV : plus stable quand l'éclairage de la photo change."""
+    bins = [0.0] * 96
+    pixels = list(image.convert("HSV").resize((64, 64), Image.Resampling.BILINEAR).getdata())
+    for hue, saturation, value in pixels:
+        bins[(hue // 32) * 12 + (saturation // 86) * 4 + (value // 64)] += 1.0
     total = float(len(pixels) or 1)
-    # Répéter légèrement l'histogramme lui donne un poids utile face aux
-    # grilles spatiales plus longues, sans modèle lourd en production.
-    normalised = tuple(value / total for value in bins)
-    return normalised * 4
+    return tuple(value / total for value in bins)
+
+
+def _difference_hash(image):
+    pixels = list(image.convert("L").resize((17, 16), Image.Resampling.LANCZOS).getdata())
+    return tuple(pixels[row * 17 + column] > pixels[row * 17 + column + 1]
+                 for row in range(16) for column in range(16))
+
+
+def _view_feature(image):
+    grey = image.convert("L")
+    return {
+        "luma": _normalise_band(_pixels(grey, "L", (24, 24))),
+        "edges": _normalise_band(_pixels(grey.filter(ImageFilter.FIND_EDGES), "L", (20, 20))),
+        "colour": _pixels(image, "RGB", (10, 10)),
+        "histogram": _colour_histogram(image),
+        "hash": _difference_hash(image),
+    }
 
 
 def image_feature(data):
@@ -55,21 +69,34 @@ def image_feature(data):
             source.verify()
         with Image.open(BytesIO(data)) as source:
             image = ImageOps.exif_transpose(source).convert("RGB")
-            square = ImageOps.pad(image, (320, 320), color=(245, 245, 245), method=Image.Resampling.LANCZOS)
-            width, height = square.size
-            centre = square.crop((width * .12, height * .12, width * .88, height * .88))
-            luminance = _normalise_band(_pixels(square, "L", (28, 28)))
-            colour = _pixels(square, "RGB", (16, 16))
-            centre_colour = _pixels(centre, "RGB", (16, 16))
-            edges = _pixels(square.convert("L").filter(ImageFilter.FIND_EDGES), "L", (16, 16))
-            return luminance + colour + centre_colour + edges + _colour_histogram(square)
+            contained = ImageOps.pad(image, (256, 256), color=(245, 245, 245), method=Image.Resampling.LANCZOS)
+            cropped = ImageOps.fit(image, (256, 256), method=Image.Resampling.LANCZOS, centering=(.5, .5))
+            return (_view_feature(contained), _view_feature(cropped))
     except (UnidentifiedImageError, OSError, ValueError) as exc:
         raise ValueError("Image JPEG, PNG ou WebP invalide.") from exc
 
 
+def _vector_similarity(first, second):
+    distance = math.sqrt(sum((a - b) ** 2 for a, b in zip(first, second)) / max(1, len(first)))
+    return max(0.0, 1.0 - distance)
+
+
+def _view_similarity(first, second):
+    hash_score = 1.0 - sum(a != b for a, b in zip(first["hash"], second["hash"])) / len(first["hash"])
+    histogram_score = sum(min(a, b) for a, b in zip(first["histogram"], second["histogram"]))
+    return (
+        .20 * _vector_similarity(first["luma"], second["luma"])
+        + .18 * _vector_similarity(first["edges"], second["edges"])
+        + .26 * _vector_similarity(first["colour"], second["colour"])
+        + .28 * histogram_score
+        + .08 * hash_score
+    )
+
+
 def similarity(first, second):
-    distance = math.sqrt(sum((a - b) ** 2 for a, b in zip(first, second)) / len(first))
-    return max(0.0, min(100.0, (1.0 - distance) * 100))
+    """Meilleur accord entre vue contenue et vue recadrée des deux images."""
+    score = max(_view_similarity(left, right) for left in first for right in second)
+    return max(0.0, min(100.0, score * 100))
 
 
 def download_listing_image(url):
