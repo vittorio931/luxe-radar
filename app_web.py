@@ -313,6 +313,12 @@ def ads_txt():
     return Response(body, content_type="text/plain; charset=utf-8", headers={"Cache-Control": "public, max-age=3600"})
 
 
+@app.get("/google6b9f96f6b2b7b56d.html")
+def google_site_verification():
+    body = "google-site-verification: google6b9f96f6b2b7b56d.html\n"
+    return Response(body, content_type="text/html; charset=utf-8", headers={"Cache-Control": "public, max-age=3600"})
+
+
 @app.get("/sitemap.xml")
 def sitemap_xml():
     locations = (url_for("accueil", _external=True), url_for("trust_center", _external=True))
