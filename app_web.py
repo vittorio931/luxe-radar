@@ -321,11 +321,63 @@ def google_site_verification():
 
 @app.get("/sitemap.xml")
 def sitemap_xml():
-    locations = (url_for("accueil", _external=True), url_for("trust_center", _external=True))
+    locations = (
+        url_for("accueil", _external=True),
+        url_for("trust_center", _external=True),
+        *(url_for("trend_page", slug=slug, _external=True) for slug in SEO_TRENDS),
+    )
     escaped = [location.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;").replace('"', "&quot;").replace("'", "&apos;") for location in locations]
     entries = "".join(f"<url><loc>{location}</loc></url>" for location in escaped)
     body = f'<?xml version="1.0" encoding="UTF-8"?>\n<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">{entries}</urlset>\n'
     return Response(body, content_type="application/xml; charset=utf-8", headers={"Cache-Control": "public, max-age=3600"})
+
+
+SEO_TRENDS = {
+    "on-cloud-5": {
+        "title": "On Cloud 5 : comparer les prix et annonces",
+        "query": "On Cloud 5",
+        "price": "250",
+        "intro": "Compare les annonces On Cloud 5 présentes dans l’index LUXE RADAR et lance un rafraîchissement sur les sources actives.",
+        "tips": ("Vérifie la pointure et l’état", "Compare le prix total avec la livraison", "Contrôle les photos et le profil vendeur"),
+    },
+    "maillot-foot": {
+        "title": "Maillots de foot : comparer les offres",
+        "query": "maillot de foot",
+        "price": "200",
+        "intro": "Recherche des maillots de clubs et de sélections sur plusieurs marketplaces depuis un seul comparateur.",
+        "tips": ("Précise le club, la saison ou le joueur", "Vérifie le flocage et les mesures", "Demande des photos des étiquettes"),
+    },
+    "maillot-cameroun": {
+        "title": "Maillot du Cameroun : annonces et prix",
+        "query": "maillot Cameroun",
+        "price": "200",
+        "intro": "Retrouve les annonces indexées pour les maillots du Cameroun et compare les prix proposés par les sources actives.",
+        "tips": ("Ajoute l’année ou la compétition recherchée", "Vérifie la taille réelle", "Contrôle l’authenticité avant l’achat"),
+    },
+    "fourteen": {
+        "title": "Fourteen : rechercher la marque sur plusieurs sites",
+        "query": "Fourteen",
+        "price": "500",
+        "intro": "Lance une recherche large Fourteen et consulte d’abord les correspondances les plus pertinentes disponibles.",
+        "tips": ("Ajoute le modèle ou la référence", "Utilise les filtres de prix", "Vérifie que le titre correspond exactement"),
+    },
+}
+
+
+@app.get("/tendances/<slug>")
+def trend_page(slug):
+    trend = SEO_TRENDS.get(slug)
+    if trend is None:
+        abort(404)
+    return render_template(
+        "trend.html",
+        trend=trend,
+        trends=SEO_TRENDS,
+        slug=slug,
+        search_url=url_for("search_share_page", q=trend["query"], price=trend["price"]),
+        canonical_url=url_for("trend_page", slug=slug, _external=True),
+        csp_nonce=g.csp_nonce,
+    )
 
 
 @app.get("/confiance")

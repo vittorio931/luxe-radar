@@ -1,0 +1,26 @@
+<!doctype html>
+<html lang="fr" data-theme="dark">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+  <meta name="description" content="{{ trend.intro }}">
+  <meta name="robots" content="index,follow,max-image-preview:large">
+  <link rel="canonical" href="{{ canonical_url }}">
+  <script async src="https://pagead2.googlesyndication.com/pagead/js/adsbygoogle.js?client=ca-pub-4965744643154588" crossorigin="anonymous"></script>
+  <link rel="icon" href="{{ url_for('static', filename='app-icon.svg') }}">
+  <link rel="stylesheet" href="{{ url_for('static', filename='trust.css', v='20260814-3') }}">
+  <title>{{ trend.title }} — LUXE RADAR</title>
+</head>
+<body>
+  <div class="aurora aurora-one" aria-hidden="true"></div><div class="aurora aurora-two" aria-hidden="true"></div>
+  <header class="trust-nav"><a class="brand" href="{{ url_for('accueil') }}"><span>LR</span>LUXE <em>RADAR</em></a><nav><a class="back" href="{{ url_for('accueil') }}">← Accueil</a></nav></header>
+  <main>
+    <section class="hero"><p class="eyebrow">COMPARATEUR MULTI-MARKETPLACES</p><h1>{{ trend.title }}</h1><p>{{ trend.intro }}</p><p><a class="back" href="{{ search_url }}">Lancer cette recherche gratuitement →</a></p></section>
+    <section class="grid">
+      {% for tip in trend.tips %}<article><span>{{ '%02d'|format(loop.index) }}</span><h2>{{ tip }}</h2><p>Les annonces viennent uniquement des sources réellement connectées. LUXE RADAR ne garantit ni l’authenticité, ni la disponibilité, ni le vendeur.</p></article>{% endfor %}
+    </section>
+    <aside><div class="notice-mark" aria-hidden="true">✓</div><div><span>Recherches populaires</span><strong>{% for item_slug, item in trends.items() %}<a href="{{ url_for('trend_page', slug=item_slug) }}">{{ item.query }}</a>{% if not loop.last %} · {% endif %}{% endfor %}</strong></div></aside>
+  </main>
+  <footer><span>LR</span>Service indépendant : les achats sont réalisés sur les marketplaces.</footer>
+</body>
+</html>
