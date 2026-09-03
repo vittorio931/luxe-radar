@@ -40,7 +40,7 @@ _NIKE_TRAIL_PANTS_FAMILY = (
 _FOURTEEN_FASHION_PATTERN = re.compile(
     r"(?<![a-z0-9])(?:shirt|tshirt|t shirt|tee|jersey|maillot|hoodie|sweat|"
     r"jacket|veste|coat|pants|pantalon|shorts|short|cap|casquette|clothing|"
-    r"sportswear|apparel|fashion)(?![a-z0-9])"
+    r"sportswear|apparel|fashion|tracksuit|track suit|football kit)(?![a-z0-9])"
 )
 
 

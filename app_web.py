@@ -760,13 +760,15 @@ def _background_query_variants(query):
     if intent.brand == "Fourteen" and not intent.product_type:
         return [
             "Fourteen shirt", "Fourteen jersey", "Fourteen jacket",
-            "Fourteen hoodie", "Fourteen sportswear",
+            "Fourteen tracksuit", "Fourteen sportswear",
         ]
 
     # Les maillots sont souvent publiés en anglais, surtout pour les équipes
     # nationales. On traduit uniquement des entités pays sûres et on conserve
     # toujours le type football dans chaque variante.
-    if intent.product_type == "maillot" and intent.line == "soccer":
+    if intent.product_type == "maillot" and (
+        intent.line == "soccer" or getattr(intent, "country", None)
+    ):
         folded = index_engine.canonical_query(query)
         country = next(
             (english for french, english in _FOOTBALL_COUNTRY_ALIASES.items()
@@ -779,6 +781,7 @@ def _background_query_variants(query):
                 f"{anchor} football jersey",
                 f"{anchor} football shirt",
                 f"{anchor} soccer jersey",
+                f"{anchor} national team jersey",
             ))
         else:
             variants.extend(("football jersey", "football shirt", "soccer jersey"))
@@ -797,6 +800,14 @@ def _background_query_variants(query):
         aliases = tuple(_SEARCH_TYPE_ALIASES.get(intent.product_type, ()))
         type_variants = [alias for alias in aliases if alias and alias.isascii()][:2]
     variants.extend(f"{anchor} {alias}".strip() for alias in type_variants[:2])
+    # Termes commerciaux fréquents, toujours ancrés sur la marque et la
+    # catégorie demandées pour préserver la précision.
+    targeted = {
+        ("Ralph Lauren", "pull"): ("Polo Ralph Lauren knit", "Ralph Lauren cardigan"),
+        ("Jacquemus", "sac"): ("Jacquemus Le Chiquito bag", "Jacquemus crossbody bag"),
+        ("Gucci", "chaussures"): ("Gucci loafers", "Gucci trainers"),
+    }
+    variants.extend(targeted.get((intent.brand, intent.product_type), ()))
     if intent.brand == "Nike" and intent.line == "trail" and intent.product_type == "pantalon":
         variants.extend(("Nike ACG pants", "Nike Phenom Elite pants"))
     return list(dict.fromkeys(value for value in variants if value))[:5]
