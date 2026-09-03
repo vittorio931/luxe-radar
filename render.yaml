@@ -1,4 +1,17 @@
 services:
+  # Façade CDN gratuite : elle ne s'endort jamais et réveille le moteur Flask
+  # en arrière-plan. Elle doit devenir l'URL partagée avec les visiteurs.
+  - type: web
+    name: luxe-radar-instant
+    runtime: static
+    buildCommand: echo "Static LUXE RADAR ready"
+    staticPublishPath: ./instant-site
+    autoDeployTrigger: commit
+    routes:
+      - type: rewrite
+        source: /*
+        destination: /index.html
+
   - type: web
     name: luxe-radar
     runtime: python

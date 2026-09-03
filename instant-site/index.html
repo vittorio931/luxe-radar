@@ -1,0 +1,58 @@
+<!doctype html>
+<html lang="fr">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+  <meta name="theme-color" content="#090b08">
+  <meta name="description" content="LUXE RADAR compare les offres mode, sneakers et luxe sur plusieurs marketplaces.">
+  <title>LUXE RADAR — Recherche instantanée</title>
+  <link rel="stylesheet" href="/instant.css">
+</head>
+<body>
+  <header class="topbar">
+    <a class="brand" href="/" aria-label="Accueil LUXE RADAR"><span>LR</span>LUXE <em>RADAR</em></a>
+    <a class="app-link" href="https://luxe-radar.onrender.com/">Ouvrir l'application</a>
+  </header>
+
+  <main>
+    <section class="hero">
+      <div class="copy">
+        <p class="eyebrow"><i></i> COMPARATEUR MULTI-MARKETPLACES</p>
+        <h1>Trouve la bonne offre.<br><strong>Avant les autres.</strong></h1>
+        <p class="intro">Mode, sneakers et luxe réunis dans une seule recherche. Le moteur se prépare discrètement pendant que tu explores.</p>
+        <form id="instant-search">
+          <label class="sr-only" for="query">Produit, marque ou référence</label>
+          <input id="query" name="q" maxlength="120" placeholder="On Cloud 5, maillot Cameroun, Fourteen…" autocomplete="off" required>
+          <button type="submit">Lancer le radar <span>→</span></button>
+        </form>
+        <div class="quick" aria-label="Recherches populaires">
+          <button data-query="On Cloud 5">On Cloud 5</button>
+          <button data-query="maillot Cameroun">Maillot Cameroun</button>
+          <button data-query="Fourteen">Fourteen</button>
+          <button data-query="Stone Island">Stone Island</button>
+        </div>
+        <p class="engine-status" id="engine-status" role="status"><span></span> Préparation du moteur en arrière-plan…</p>
+      </div>
+
+      <div class="preview" aria-label="Aperçu de l'application">
+        <div class="preview-top"><b><span>LR</span> LUXE RADAR</b><small>RADAR LIVE</small></div>
+        <div class="preview-search">On Cloud 5 <b>⌕</b></div>
+        <div class="chips"><span>Toutes les sources</span><span>Prix croissant</span></div>
+        <div class="cards">
+          <article><div class="shoe shoe-one">ON</div><p>On Cloud 5</p><strong>79,90 €</strong><small>Marketplace vérifiée</small></article>
+          <article><div class="shoe shoe-two">ON</div><p>Cloud 5 Waterproof</p><strong>94,00 €</strong><small>Offre comparée</small></article>
+        </div>
+      </div>
+    </section>
+
+    <section class="proof">
+      <article><strong>Une recherche</strong><span>Plusieurs marketplaces explorées</span></article>
+      <article><strong>Prix comparés</strong><span>Tri et filtres après recherche</span></article>
+      <article><strong>Résultats réels</strong><span>Aucune annonce inventée</span></article>
+      <article><strong>100 % gratuit</strong><span>Accès immédiat au radar</span></article>
+    </section>
+  </main>
+
+  <script src="/instant.js" defer></script>
+</body>
+</html>
