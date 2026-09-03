@@ -1,14 +1,14 @@
-const CACHE = 'luxe-radar-shell-v404-image-first';
+const CACHE = 'luxe-radar-shell-v405-source-truth';
 const SHELL = [
-  '/static/app.css?v=20260831-404',
-  '/static/app.js?v=20260831-404',
-  '/static/image-first.js?v=20260831-404',
-  '/static/risk.js?v=20260831-404',
-  '/static/luxe-radar-logo.png?v=20260831-404',
+  '/static/app.css?v=20260903-405',
+  '/static/app.js?v=20260903-405',
+  '/static/image-first.js?v=20260903-405',
+  '/static/risk.js?v=20260903-405',
+  '/static/luxe-radar-logo.png?v=20260903-405',
   '/static/app-icon.svg',
-  '/static/app-icon-192.png?v=20260831-404',
-  '/static/app-icon-512.png?v=20260831-404',
-  '/static/manifest.webmanifest?v=20260831-404',
+  '/static/app-icon-192.png?v=20260903-405',
+  '/static/app-icon-512.png?v=20260903-405',
+  '/static/manifest.webmanifest?v=20260903-405',
   '/static/offline.html',
   '/static/offline.css',
   '/static/offline.js'
