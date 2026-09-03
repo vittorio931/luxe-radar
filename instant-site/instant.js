@@ -20,7 +20,9 @@ async function wakeEngine() {
 }
 
 function openSearch(query) {
-  const url = new URL('/', BACKEND);
+  // /search exécute réellement la recherche côté Flask. La racine avec ?q=
+  // ne ferait que préremplir le champ, ce qui obligeait à cliquer une seconde fois.
+  const url = new URL('/search', BACKEND);
   url.searchParams.set('q', query);
   window.location.assign(url.toString());
 }

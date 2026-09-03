@@ -11,6 +11,7 @@ assert 'id="engine-status"' in html
 assert 'name="q"' in html
 assert "https://luxe-radar.onrender.com" in js
 assert "/api/health" in js and "mode: 'no-cors'" in js
+assert "new URL('/search', BACKEND)" in js
 assert "url.searchParams.set('q', query)" in js
 assert "@media(max-width:800px)" in css
 assert "name: luxe-radar-instant" in blueprint
