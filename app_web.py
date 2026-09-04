@@ -813,7 +813,7 @@ def _background_query_variants(query):
     return list(dict.fromkeys(value for value in variants if value))[:5]
 
 
-def _render_live_ebay_results(query, price):
+def _render_live_ebay_results(query, price, *, variant_limit=None):
     """Fallback HTTP borné avec relâchement contrôlé d'un modèle libre.
 
     Une expression non normalisée telle que « Columbia Tech Wind » peut être
@@ -843,6 +843,8 @@ def _render_live_ebay_results(query, price):
 
     merged = {}
     unique_queries = list(dict.fromkeys(queries))
+    if variant_limit is not None:
+        unique_queries = unique_queries[:max(1, int(variant_limit))]
 
     def _search(candidate_query):
         return rechercher_multi_marketplaces(
@@ -3213,7 +3215,12 @@ def _run_radar_search(recherche, prix_saisi, selected_platform, reference_saisie
                     and indexed.total == 0
                     and state["selected_platform"] in {"Toutes", "eBay"}
                 ):
-                    live_results = _render_live_ebay_results(connector_query, prix)
+                    # Deux graphies suffisent pour éviter un premier écran vide.
+                    # La source eBay progressive relance ensuite toutes les
+                    # variantes en arrière-plan pour conserver le rappel final.
+                    live_results = _render_live_ebay_results(
+                        connector_query, prix, variant_limit=2,
+                    )
                     if live_results:
                         indexed_results = list(live_results)
                         indexed = index_engine.IndexSearch(

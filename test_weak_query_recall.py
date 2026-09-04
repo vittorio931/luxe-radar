@@ -1,4 +1,6 @@
-from app_web import _background_query_variants
+from unittest.mock import patch
+
+from app_web import _background_query_variants, _render_live_ebay_results
 from relevance_gate import evaluate_offer
 
 
@@ -33,6 +35,14 @@ def main():
         assert evaluate_offer(query, {"titre": title}).accepted, (query, title)
     for query, title in negatives:
         assert not evaluate_offer(query, {"titre": title}).accepted, (query, title)
+
+    calls = []
+    def fake_search(**kwargs):
+        calls.append(kwargs["marque"])
+        return []
+    with patch("app_web.rechercher_multi_marketplaces", side_effect=fake_search):
+        _render_live_ebay_results("Fourteen", 500, variant_limit=2)
+    assert len(calls) == 2 and set(calls) == {"Fourteen shirt", "Fourteen jersey"}, calls
     print("OK - rappel ciblé des cinq recherches faibles sans faux positifs")
 
 
