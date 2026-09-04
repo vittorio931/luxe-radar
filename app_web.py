@@ -3215,11 +3215,12 @@ def _run_radar_search(recherche, prix_saisi, selected_platform, reference_saisie
                     and indexed.total == 0
                     and state["selected_platform"] in {"Toutes", "eBay"}
                 ):
-                    # Deux graphies suffisent pour éviter un premier écran vide.
+                    # Une seule graphie ciblée amorce le premier écran : attendre
+                    # deux réponses liait encore sa latence à la plus lente.
                     # La source eBay progressive relance ensuite toutes les
                     # variantes en arrière-plan pour conserver le rappel final.
                     live_results = _render_live_ebay_results(
-                        connector_query, prix, variant_limit=2,
+                        connector_query, prix, variant_limit=1,
                     )
                     if live_results:
                         indexed_results = list(live_results)

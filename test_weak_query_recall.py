@@ -41,8 +41,8 @@ def main():
         calls.append(kwargs["marque"])
         return []
     with patch("app_web.rechercher_multi_marketplaces", side_effect=fake_search):
-        _render_live_ebay_results("Fourteen", 500, variant_limit=2)
-    assert len(calls) == 2 and set(calls) == {"Fourteen shirt", "Fourteen jersey"}, calls
+        _render_live_ebay_results("Fourteen", 500, variant_limit=1)
+    assert calls == ["Fourteen shirt"], calls
     print("OK - rappel ciblé des cinq recherches faibles sans faux positifs")
 
 
