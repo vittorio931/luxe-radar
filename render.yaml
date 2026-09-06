@@ -110,6 +110,10 @@ services:
         value: "0"
       - key: LUXE_RADAR_DISCORD_GUILD_ID
         value: "1545750308267888721"
+      - key: LUXE_RADAR_SCAN_CONCURRENCY
+        value: "1"
+      - key: LUXE_RADAR_MANUAL_SCAN_TIMEOUT
+        value: "60"
       - key: LUXE_RADAR_DISCORD_BOT_TOKEN
         sync: false
       - key: EBAY_CLIENT_ID

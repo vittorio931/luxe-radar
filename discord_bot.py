@@ -24,8 +24,10 @@ import discord_radar
 
 
 # Plafond commun aux salons, alertes personnelles et commandes manuelles.
-# Il protège le PC même lorsque plusieurs files demandent un scan en même temps.
-_SCAN_SLOTS = BoundedSemaphore(2)
+# Render Free ne dispose pas d'assez de mémoire pour deux Chromium simultanés.
+_SCAN_CONCURRENCY = max(1, min(int(os.environ.get("LUXE_RADAR_SCAN_CONCURRENCY", "2")), 2))
+_SCAN_SLOTS = BoundedSemaphore(_SCAN_CONCURRENCY)
+_MANUAL_SCAN_TIMEOUT = max(15, min(int(os.environ.get("LUXE_RADAR_MANUAL_SCAN_TIMEOUT", "60")), 120))
 
 
 def discord_identity(user_id: int) -> str:
@@ -412,13 +414,23 @@ async def aide(interaction: discord.Interaction) -> None:
 
 @client.tree.command(name="scanner", description="Scanner Vinted maintenant avec ton Radar")
 async def scanner(interaction: discord.Interaction) -> None:
+    # Accuser réception avant tout accès disque/recherche : Discord impose un
+    # délai très court, tandis qu'un connecteur navigateur peut être lent.
+    await interaction.response.defer(ephemeral=True, thinking=True)
     watch = vinted_watch.get_watch(discord_identity(interaction.user.id))
     if not watch:
-        await interaction.response.send_message("Configure d’abord ton Radar avec `/radar`.", ephemeral=True)
+        await interaction.followup.send("Configure d’abord ton Radar avec `/radar`.", ephemeral=True)
         return
-    await interaction.response.defer(ephemeral=True, thinking=True)
     try:
-        offers = await asyncio.to_thread(_scan, watch)
+        offers = await asyncio.wait_for(
+            asyncio.to_thread(_scan, watch), timeout=_MANUAL_SCAN_TIMEOUT,
+        )
+    except TimeoutError:
+        await interaction.followup.send(
+            "La recherche prend trop de temps sur l’hébergement gratuit. Le bot reste en ligne : réessaie dans une minute.",
+            ephemeral=True,
+        )
+        return
     except Exception:
         await interaction.followup.send("Vinted est temporairement indisponible. Réessaie dans quelques instants.", ephemeral=True)
         return
@@ -445,7 +457,16 @@ async def ebay(
         return
     await interaction.response.defer(ephemeral=True, thinking=True)
     try:
-        offers = await asyncio.to_thread(_scan, {"source": "eBay", "query": query, "price_max": prix_max})
+        offers = await asyncio.wait_for(
+            asyncio.to_thread(_scan, {"source": "eBay", "query": query, "price_max": prix_max}),
+            timeout=_MANUAL_SCAN_TIMEOUT,
+        )
+    except TimeoutError:
+        await interaction.followup.send(
+            "La recherche eBay prend trop de temps. Le bot reste disponible : réessaie dans une minute.",
+            ephemeral=True,
+        )
+        return
     except Exception:
         await interaction.followup.send("eBay indisponible : vérifie la configuration API et réessaie plus tard.", ephemeral=True)
         return
