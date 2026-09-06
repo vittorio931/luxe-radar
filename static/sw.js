@@ -1,14 +1,18 @@
-const CACHE = 'luxe-radar-shell-v405-source-truth';
+const CACHE = 'luxe-radar-shell-v415-vinted-fast-watch';
 const SHELL = [
-  '/static/app.css?v=20260903-405',
-  '/static/app.js?v=20260903-405',
-  '/static/image-first.js?v=20260903-405',
-  '/static/risk.js?v=20260903-405',
-  '/static/luxe-radar-logo.png?v=20260903-405',
+  '/static/app.css?v=20260905-415',
+  '/static/quick-buy.css?v=20260905-415',
+  '/static/vinted-bot.css?v=20260905-415',
+  '/static/app.js?v=20260905-415',
+  '/static/quick-buy.js?v=20260905-415',
+  '/static/vinted-bot.js?v=20260905-415',
+  '/static/image-first.js?v=20260905-415',
+  '/static/risk.js?v=20260905-415',
+  '/static/luxe-radar-logo.png?v=20260905-415',
   '/static/app-icon.svg',
-  '/static/app-icon-192.png?v=20260903-405',
-  '/static/app-icon-512.png?v=20260903-405',
-  '/static/manifest.webmanifest?v=20260903-405',
+  '/static/app-icon-192.png?v=20260905-415',
+  '/static/app-icon-512.png?v=20260905-415',
+  '/static/manifest.webmanifest?v=20260905-415',
   '/static/offline.html',
   '/static/offline.css',
   '/static/offline.js'

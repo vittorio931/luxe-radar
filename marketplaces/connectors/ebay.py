@@ -1389,6 +1389,7 @@ class EbayConnector(
         price_max=None,
         limit=20,
         page=1,
+        newest_first=False,
     ):
         query = str(
             query or ""
@@ -1510,6 +1511,8 @@ class EbayConnector(
             "fieldgroups":
                 "EXTENDED",
         }
+        if newest_first:
+            params["sort"] = "newlyListed"
 
         # ----------------------------------------------------
         # FILTRE PRIX COTE EBAY
@@ -1924,6 +1927,9 @@ class EbayConnector(
                     "marketplace":
                         self.name,
 
+                    "listed_at": item.get("itemCreationDate"),
+                    "listing_date_source": "eBay Browse API · itemCreationDate",
+
                     "titre":
                         titre,
 
@@ -2037,6 +2043,9 @@ class EbayConnector(
         # ====================================================
         # CLASSEMENT
         # ====================================================
+
+        if newest_first:
+            return resultats[:limit]
 
         resultats.sort(
             key=lambda x: (

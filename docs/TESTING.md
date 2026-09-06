@@ -1,5 +1,15 @@
 # TESTING.md — Validation checklist
 
+## Radars Discord Vinted / eBay
+
+`python -m unittest test_discord_radar -v` teste hors réseau le filtrage CPU,
+les deux sources, les permissions des commandes, le dédoublonnage persistant,
+les échecs d'envoi, la pause pendant un scan et l'installation idempotente.
+Exécuter aussi `test_discord_bot.py` et `test_discord_server_setup.py`.
+Les recherches réelles et la publication dans un salon sont des validations
+distinctes ; des tests avec doublures ne prouvent pas l'accès à une marketplace.
+Voir `docs/DISCORD_RADARS.md` pour l'installation ciblée et ses limites.
+
 ## Always before major changes
 ```powershell
 .\.venv\Scripts\python.exe .\luxe_radar_manager.py backup

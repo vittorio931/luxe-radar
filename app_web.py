@@ -1,11 +1,12 @@
 from collections import OrderedDict
 from collections import defaultdict, deque
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from datetime import timedelta
+from datetime import datetime, timedelta, timezone
 import json
 import logging
 import math
 import secrets
+import sqlite3
 import time
 import unicodedata
 import hashlib
@@ -32,6 +33,8 @@ import collector
 import index_engine
 import learn
 import search_sessions
+import quick_buy
+import vinted_watch
 
 from connector_registry import get_available_connectors, get_connector
 from marketplaces.catalog import get_definition, get_definitions, get_sites
@@ -64,7 +67,7 @@ def _parse_intent(query):
 
 app = Flask(__name__)
 APP_VERSION = "3.8.1"
-ASSET_VERSION = "20260903-405"
+ASSET_VERSION = "20260905-415"
 IS_PRODUCTION = os.environ.get("LUXE_RADAR_ENV", "development").lower() == "production"
 IS_RENDER_RUNTIME = bool(
     os.environ.get("RENDER")
@@ -104,6 +107,7 @@ PUBLIC_RESULT_FIELDS = {
     "risque_contrefacon", "alerte_authenticite", "signaux_authenticite",
     "score_identite", "niveau_identite", "correspondance_verifiee",
     "explication_pertinence", "conflit_pertinence",
+    "marque", "brand", "size", "disponible", "sold", "frais", "frais_port",
 }
 REFERENCE_CATEGORY_ORDER = {"EXCELLENTE AFFAIRE": 0, "BONNE AFFAIRE": 1, "INTERESSANTE": 2, "A VERIFIER": 3, "DOUTEUSE": 4, "A IGNORER": 5}
 SERVER_MESSAGES = {
@@ -116,6 +120,8 @@ SERVER_MESSAGES = {
 }
 _rate_buckets = defaultdict(deque)
 _rate_lock = Lock()
+_quick_buy_active = set()
+_quick_buy_active_lock = Lock()
 MAX_RATE_BUCKETS = 4096
 
 
@@ -1027,6 +1033,258 @@ def account_capabilities():
     })
 
 
+def _quick_buy_identity():
+    return quick_buy.user_id(str(session.get("csrf_token") or ""))
+
+
+def _quick_buy_plan():
+    # Ne jamais faire confiance au plan conservé dans localStorage. Ce hook ne
+    # lira qu'un plan attribué par le futur système de comptes côté serveur.
+    value = str(session.get("account_plan") or "free").casefold()
+    return value if value in {"free", "pro", "premium", "reseller"} else "free"
+
+
+def _find_quick_buy_offer(key):
+    owner = str(session.get("csrf_token") or "")
+    with _cache_lock:
+        _clean_cache()
+        for entry in reversed(list(_search_cache.values())):
+            expected = str(entry.get("owner") or "")
+            if expected and not secrets.compare_digest(expected, owner):
+                continue
+            for offer in entry.get("results") or []:
+                if secrets.compare_digest(quick_buy.offer_key(offer), str(key or "")):
+                    return dict(offer)
+    return None
+
+
+@app.get("/api/quick-buy/preferences")
+def quick_buy_preferences_get():
+    uid = _quick_buy_identity()
+    return jsonify({
+        "enabled": quick_buy.enabled(),
+        "preferences": quick_buy.get_preferences(uid),
+        "quota": quick_buy.quota(uid, _quick_buy_plan()),
+        "purchase_capability": quick_buy.LINK_ONLY,
+    })
+
+
+@app.post("/api/quick-buy/preferences")
+def quick_buy_preferences_save():
+    if not quick_buy.enabled():
+        return jsonify({"ok": False, "status": "QUICK_BUY_DISABLED"}), 503
+    preferences = quick_buy.save_preferences(
+        _quick_buy_identity(), request.get_json(silent=True) or {}
+    )
+    return jsonify({"ok": True, "preferences": preferences})
+
+
+@app.post("/api/quick-buy/check")
+def quick_buy_check():
+    if not quick_buy.enabled():
+        return jsonify({"ok": False, "status": "QUICK_BUY_DISABLED"}), 503
+    client = request.remote_addr or "unknown"
+    if not _rate_allowed((client, "quick_buy"), 8, 60):
+        return jsonify({"ok": False, "status": "RATE_LIMITED"}), 429, {"Retry-After": "60"}
+    payload = request.get_json(silent=True) or {}
+    key = str(payload.get("offer_key") or "")
+    request_id = str(payload.get("quick_buy_request_id") or "")
+    if not re.fullmatch(r"[A-Za-z0-9_-]{16,80}", request_id) or not re.fullmatch(r"[0-9a-f]{32}", key):
+        return jsonify({"ok": False, "status": "INVALID_REQUEST"}), 400
+    uid = _quick_buy_identity()
+    previous = quick_buy.previous_response(uid, request_id)
+    if previous is not None:
+        return jsonify(previous)
+    allowance = quick_buy.quota(uid, _quick_buy_plan())
+    if not allowance["allowed"]:
+        return jsonify({"ok": False, "status": "QUOTA_EXCEEDED", "quota": allowance}), 403
+    with _quick_buy_active_lock:
+        if uid in _quick_buy_active:
+            return jsonify({"ok": False, "status": "CHECK_IN_PROGRESS"}), 409
+        _quick_buy_active.add(uid)
+    try:
+        offer = _find_quick_buy_offer(key)
+        if offer is None:
+            return jsonify({"ok": False, "status": "ITEM_REMOVED"}), 404
+        provider = quick_buy.provider_for(offer)
+        if provider is None:
+            return jsonify({"ok": False, "status": "UNAVAILABLE"}), 400
+        preferences = quick_buy.get_preferences(uid)
+        ok, status, reason = provider.check_offer(offer, preferences)
+        destination = provider.get_checkout_destination(offer) if ok else None
+        response = {
+            "ok": bool(ok), "status": status,
+            "purchase_capability": provider.get_purchase_capability(),
+            "destination_url": destination,
+            "price": offer.get("prix"), "currency": offer.get("devise") or "EUR",
+            "title": offer.get("titre") or offer.get("title") or "Annonce Vinted",
+            "availability_confirmed": offer.get("disponible") is True,
+            "fees_known": any(offer.get(name) is not None for name in ("frais", "frais_port")),
+            "failure_reason": reason,
+            "quota": allowance,
+        }
+        quick_buy.record(uid, request_id, key, offer, response)
+        return jsonify(response), (200 if ok else 409)
+    except (sqlite3.Error, OSError, TimeoutError):
+        app.logger.exception("Quick Buy temporairement indisponible")
+        return jsonify({"ok": False, "status": "NETWORK_ERROR"}), 503
+    finally:
+        with _quick_buy_active_lock:
+            _quick_buy_active.discard(uid)
+
+
+@app.post("/api/vinted-bot/scan")
+def vinted_bot_scan():
+    """Lecture rapide de l'index Vinted, sans scraping dans la requête web."""
+    client = request.remote_addr or "unknown"
+    if not _rate_allowed((client, "vinted_bot"), 24, 60):
+        return jsonify({"ok": False, "status": "RATE_LIMITED"}), 429, {"Retry-After": "60"}
+    payload = request.get_json(silent=True) or {}
+    query = str(payload.get("query") or "").strip()[:120]
+    price_max = _safe_number(payload.get("price_max"), None)
+    price_min = _safe_number(payload.get("price_min"), 0) or 0
+    size = str(payload.get("size") or "").strip().casefold()[:30]
+    required = [word.strip().casefold() for word in str(payload.get("required") or "").split(",") if word.strip()][:10]
+    excluded = [word.strip().casefold() for word in str(payload.get("excluded") or "").split(",") if word.strip()][:10]
+    offset = max(0, min(int(_safe_number(payload.get("offset"), 0) or 0), 5000))
+    batch = max(20, min(int(_safe_number(payload.get("limit"), 100) or 100), 200))
+    live_page = max(1, min(int(_safe_number(payload.get("live_page"), (int(time.time() // 60) % 4) + 1) or 1), 4))
+    if len(query) < 2 or price_max is None or not 0 < price_max <= 1_000_000:
+        return jsonify({"ok": False, "status": "INVALID_CRITERIA"}), 400
+    try:
+        indexed_results = []
+        index_available = True
+        try:
+            indexed = index_engine.search(
+                query, price_max=price_max, marketplace="Vinted",
+                identity="all", limit=min(5000, offset + batch + 500),
+            )
+            indexed_results = indexed.results or []
+        except (sqlite3.Error, OSError, TimeoutError):
+            index_available = False
+            app.logger.exception("Bot Vinted : index indisponible, passage au direct")
+
+        offers = []
+        for item in indexed_results:
+            price = _safe_number(item.get("prix"), None)
+            text = " ".join(str(item.get(key) or "") for key in ("titre", "title", "taille", "size", "etat", "condition")).casefold()
+            if price is None or price < price_min or price > price_max:
+                continue
+            if size and size not in text:
+                continue
+            if required and any(word not in text for word in required):
+                continue
+            if excluded and any(word in text for word in excluded):
+                continue
+            offers.append(_public_result(item))
+        live_fallback = False
+        live_attempted = offset == 0 and not app.testing
+        live_available = False
+        if live_attempted:
+            try:
+                live = get_connector("Vinted").search(
+                    query=query, price_max=price_max, limit=min(batch, 100), page=live_page
+                )
+                live_available = True
+                for item in live or []:
+                    price = _safe_number(item.get("prix"), None)
+                    text = " ".join(str(item.get(key) or "") for key in ("titre", "title", "taille", "size", "etat", "condition")).casefold()
+                    if price is None or price < price_min or price > price_max:
+                        continue
+                    if size and size not in text:
+                        continue
+                    if required and any(word not in text for word in required):
+                        continue
+                    if excluded and any(word in text for word in excluded):
+                        continue
+                    offers.append(_public_result(item))
+                if live:
+                    live_fallback = True
+                    _index_results_async(offers, query)
+            except Exception:
+                app.logger.exception("Bot Vinted : recherche directe indisponible")
+        if not index_available and (not live_attempted or not live_available):
+            return jsonify({"ok": False, "status": "TEMPORARILY_UNAVAILABLE"}), 503
+        # Rend aussi ces offres éligibles à la vérification Quick Buy : le
+        # navigateur ne pourra toujours jamais fournir lui-même prix ou URL.
+        unique_offers = {}
+        for offer in offers:
+            unique_offers[quick_buy.offer_key(offer)] = offer
+        offers = list(unique_offers.values())
+        offers.sort(key=lambda item: (
+            -_safe_number(item.get("score"), 0),
+            -_safe_number(item.get("score_confiance"), 0),
+            _safe_number(item.get("prix"), 1_000_000),
+        ))
+        page = offers[offset:offset + batch]
+        refresh_queued = False
+        if offset == 0 and len(offers) < batch and collector.COLLECTOR_ENABLED:
+            try:
+                refresh_queued = bool(_collector.enqueue(query, price_max))
+            except Exception:
+                refresh_queued = False
+        _cache_results(page, owner=session.get("csrf_token"), search_query=query,
+                       search_price=price_max, selected_platform="Vinted")
+        return jsonify({
+            "ok": True, "status": "SCANNED", "source": "Vinted",
+            "checked_at": datetime.now(timezone.utc).isoformat(),
+            "count": len(offers), "offers": page, "mode": "indexed_offers",
+            "offset": offset, "next_offset": offset + len(page),
+            "has_more": offset + len(page) < len(offers),
+            "refresh_queued": refresh_queued,
+            "live_fallback": live_fallback,
+            "live_attempted": live_attempted,
+            "live_available": live_available,
+            "index_available": index_available,
+            "live_page": live_page,
+        })
+    except (sqlite3.Error, OSError, TimeoutError):
+        app.logger.exception("Bot Vinted : index indisponible")
+        return jsonify({"ok": False, "status": "TEMPORARILY_UNAVAILABLE"}), 503
+
+
+@app.get("/api/vinted-bot/watch")
+def vinted_bot_watch_get():
+    try:
+        watch = vinted_watch.get_watch(_quick_buy_identity())
+        return jsonify({"ok": True, "watch": watch})
+    except (sqlite3.Error, OSError):
+        return jsonify({"ok": False, "status": "TEMPORARILY_UNAVAILABLE"}), 503
+
+
+@app.put("/api/vinted-bot/watch")
+def vinted_bot_watch_put():
+    client = request.remote_addr or "unknown"
+    if not _rate_allowed((client, "vinted_watch_write"), 12, 60):
+        return jsonify({"ok": False, "status": "RATE_LIMITED"}), 429
+    try:
+        watch = vinted_watch.save_watch(_quick_buy_identity(), request.get_json(silent=True) or {})
+        return jsonify({"ok": True, "watch": watch}), 201
+    except ValueError:
+        return jsonify({"ok": False, "status": "INVALID_CRITERIA"}), 400
+    except (sqlite3.Error, OSError):
+        return jsonify({"ok": False, "status": "TEMPORARILY_UNAVAILABLE"}), 503
+
+
+@app.delete("/api/vinted-bot/watch")
+def vinted_bot_watch_delete():
+    try:
+        found = vinted_watch.set_active(_quick_buy_identity(), False)
+        return jsonify({"ok": True, "active": False, "found": found})
+    except (sqlite3.Error, OSError):
+        return jsonify({"ok": False, "status": "TEMPORARILY_UNAVAILABLE"}), 503
+
+
+@app.get("/api/vinted-bot/alerts")
+def vinted_bot_alerts():
+    try:
+        mark_read = request.args.get("mark_read") == "1"
+        items = vinted_watch.alerts(_quick_buy_identity(), mark_read=mark_read, limit=request.args.get("limit", 100))
+        return jsonify({"ok": True, "count": len(items), "alerts": items})
+    except (sqlite3.Error, OSError, TypeError, ValueError):
+        return jsonify({"ok": False, "status": "TEMPORARILY_UNAVAILABLE"}), 503
+
+
 @app.get("/api/index/status")
 def index_status():
     state = index_engine.stats()
@@ -1105,6 +1363,38 @@ _index_executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="luxe-ind
 _collector = collector.Collector()
 
 
+def _scan_vinted_watch(criteria):
+    """Scan borné utilisé hors requête par le worker d'alertes."""
+    query = str(criteria.get("query") or "").strip()
+    price_min = _safe_number(criteria.get("price_min"), 0) or 0
+    price_max = _safe_number(criteria.get("price_max"), None)
+    size = str(criteria.get("size") or "").strip().casefold()
+    required = [x.strip().casefold() for x in str(criteria.get("required") or "").split(",") if x.strip()][:10]
+    excluded = [x.strip().casefold() for x in str(criteria.get("excluded") or "").split(",") if x.strip()][:10]
+    if len(query) < 2 or price_max is None:
+        return []
+    page = (int(time.time() // max(30, int(criteria.get("interval") or 900))) % 4) + 1
+    raw = get_connector("Vinted").search(query=query, price_max=price_max, limit=100, page=page)
+    offers = []
+    for item in raw or []:
+        price = _safe_number(item.get("prix"), None)
+        text = " ".join(str(item.get(key) or "") for key in ("titre", "title", "taille", "size", "etat", "condition")).casefold()
+        if price is None or price < price_min or price > price_max or (size and size not in text):
+            continue
+        if required and any(word not in text for word in required):
+            continue
+        if excluded and any(word in text for word in excluded):
+            continue
+        public = _public_result(item)
+        if quick_buy.safe_vinted_url(public.get("lien") or public.get("url")):
+            offers.append(public)
+    _index_results_async(offers, query)
+    return offers
+
+
+_vinted_watch_worker = vinted_watch.WatchWorker(_scan_vinted_watch)
+
+
 def _start_background_workers():
     """Démarre collector + learning une seule fois (appelé par hook Gunicorn ou __main__)."""
     try:
@@ -1116,6 +1406,10 @@ def _start_background_workers():
         import index_engine as _ie
         learn.start_learn_worker(db_path=_ie.default_db_path())
     except Exception:  # pragma: no cover - le learning ne doit pas bloquer l'app
+        pass
+    try:
+        _vinted_watch_worker.start()
+    except Exception:  # pragma: no cover - les alertes ne bloquent jamais l'app
         pass
 
 
@@ -2194,6 +2488,11 @@ def _public_result(item):
         if isinstance(value, str):
             value = value[:2048] if key in {"lien", "url", "image"} else value[:500] if key in {"titre", "title"} else value[:200]
         public[key] = value
+    if str(item.get("marketplace") or "").casefold() == "vinted":
+        public["offer_key"] = quick_buy.offer_key(item)
+        public["quick_buy_available"] = bool(
+            quick_buy.enabled() and quick_buy.safe_vinted_url(item.get("lien") or item.get("url"))
+        )
     for key in ("lien", "url", "image"):
         if key not in public:
             continue
@@ -3460,6 +3759,9 @@ def _render_search_page(state, catalog_sites, active_marketplaces):
         csrf_token=session["csrf_token"],
         csp_nonce=g.csp_nonce,
         learn_enabled=learn.LEARN_ENABLED,
+        quick_buy_enabled=quick_buy.enabled(),
+        quick_buy_launch_free=quick_buy.launch_free(),
+        quick_buy_free_monthly_limit=quick_buy.free_monthly_limit(),
     )
 
 

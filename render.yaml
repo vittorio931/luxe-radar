@@ -33,6 +33,12 @@ services:
         value: "true"
       - key: LUXE_RADAR_VERBOSE
         value: "false"
+      - key: QUICK_BUY_ENABLED
+        value: "true"
+      - key: QUICK_BUY_LAUNCH_FREE
+        value: "true"
+      - key: QUICK_BUY_FREE_MONTHLY_LIMIT
+        value: "3"
       - key: PLAYWRIGHT_BROWSERS_PATH
         value: "0"
       - key: LUXE_RADAR_MULTI_TIMEOUT
@@ -86,3 +92,27 @@ services:
         sync: false
       - key: LUXE_RADAR_PUBLIC_BASE_URL
         value: https://luxe-radar.onrender.com
+
+  # Bot Discord séparé du site. Le plan Web gratuit fournit l'URL de santé
+  # exigée par Render, mais peut s'endormir après une période sans trafic.
+  - type: web
+    name: luxe-radar-discord
+    runtime: python
+    plan: free
+    buildCommand: python -m pip install -r requirements.txt && python -m playwright install chromium
+    startCommand: python discord_render.py
+    healthCheckPath: /health
+    autoDeployTrigger: commit
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.14.3
+      - key: PLAYWRIGHT_BROWSERS_PATH
+        value: "0"
+      - key: LUXE_RADAR_DISCORD_GUILD_ID
+        value: "1545750308267888721"
+      - key: LUXE_RADAR_DISCORD_BOT_TOKEN
+        sync: false
+      - key: EBAY_CLIENT_ID
+        sync: false
+      - key: EBAY_CLIENT_SECRET
+        sync: false

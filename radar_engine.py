@@ -1471,6 +1471,7 @@ def rechercher_vinted(
     limite=10,
     headless=False,
     page=1,
+    newest_first=False,
 ):
     query = str(
         marque or ""
@@ -1504,6 +1505,8 @@ def rechercher_vinted(
         "&currency=EUR"
         f"&page={page_int}"
     )
+    if newest_first:
+        url += "&order=newest_first"
 
     annonces = []
     vus = set()
@@ -1883,6 +1886,9 @@ def rechercher_vinted(
 
         finally:
             browser.close()
+
+    if newest_first:
+        return annonces[:limite_int]
 
     annonces.sort(
         key=lambda x: (
