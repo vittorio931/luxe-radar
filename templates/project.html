@@ -1,0 +1,31 @@
+<!doctype html>
+<html lang="fr" data-theme="dark">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+  <meta name="theme-color" content="#07090d">
+  <meta name="description" content="Présentation de LUXE RADAR, moteur de recherche et comparateur multi-marketplaces pour la mode, les sneakers et la seconde main.">
+  <meta name="robots" content="index,follow,max-image-preview:large">
+  <link rel="canonical" href="{{ url_for('project_showcase', _external=True) }}">
+  <link rel="icon" href="{{ url_for('static', filename='app-icon.svg') }}">
+  <link rel="stylesheet" href="{{ url_for('static', filename='trust.css', v='20260907-1') }}">
+  <title>Le projet — LUXE RADAR</title>
+</head>
+<body>
+  <div class="aurora aurora-one" aria-hidden="true"></div><div class="aurora aurora-two" aria-hidden="true"></div>
+  <header class="trust-nav"><a class="brand" href="{{ url_for('accueil') }}"><span>LR</span>LUXE <em>RADAR</em></a><nav><a class="language" href="{{ url_for('trust_center') }}">Confiance</a><a class="back" href="{{ url_for('accueil') }}">← Ouvrir l’application</a></nav></header>
+  <main>
+    <section class="hero"><div class="hero-orb" aria-hidden="true">LR</div><p class="eyebrow">PROJET · VERSION {{ app_version }}</p><h1>Trouver la bonne annonce sans ouvrir dix plateformes.</h1><p>LUXE RADAR rassemble la recherche, le classement, la comparaison et l’organisation des annonces mode, sneakers, luxe et running dans une seule expérience.</p><div class="facts"><strong><b>{{ connector_count }}</b> connecteurs configurés</strong><strong><b>{{ catalog_site_count }}</b> sites cartographiés</strong><strong><b>4</b> produits comparables</strong></div></section>
+    <section class="grid">
+      <article><span>01</span><h2>Le problème</h2><p>Les offres sont dispersées, les filtres diffèrent et comparer les prix demande trop d’onglets et de temps.</p></article>
+      <article><span>02</span><h2>La solution</h2><p>Une requête unique, des résultats par lots, des filtres après recherche et des liens directs vers chaque marketplace.</p></article>
+      <article><span>03</span><h2>La différence</h2><p>Le moteur accepte marques, modèles, fautes courantes et références exactes, puis garde les correspondances faibles plus bas au lieu de les inventer ou de les masquer.</p></article>
+      <article><span>04</span><h2>Expérience</h2><p>Scroll continu, comparaison de 2 à 4 offres, favoris locaux, historique, recherche par image et outils pour la revente.</p></article>
+      <article><span>05</span><h2>Confiance</h2><p>Aucun achat automatique : prix, état, authenticité, vendeur et disponibilité restent à vérifier sur la marketplace officielle.</p></article>
+      <article><span>06</span><h2>Vision</h2><p>Construire un moteur shopping indépendant où les annonces déjà indexées apparaissent immédiatement pendant que les sources disponibles se rafraîchissent en arrière-plan.</p></article>
+    </section>
+    <aside><div class="notice-mark">✓</div><div><span>PREUVES TECHNIQUES</span><strong>Pagination, déduplication, filtres, sécurité, accessibilité mobile et recherche visuelle sont couverts par la suite de tests du projet.</strong></div></aside>
+  </main>
+  <footer><span>LR</span>Prototype indépendant · aucune affiliation avec les marketplaces référencées.</footer>
+</body>
+</html>

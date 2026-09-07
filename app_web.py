@@ -329,6 +329,7 @@ def google_site_verification():
 def sitemap_xml():
     locations = (
         url_for("accueil", _external=True),
+        url_for("project_showcase", _external=True),
         url_for("trust_center", _external=True),
         *(url_for("trend_page", slug=slug, _external=True) for slug in SEO_TRENDS),
     )
@@ -1075,6 +1076,19 @@ def quick_buy_preferences_save():
         return jsonify({"ok": False, "status": "QUICK_BUY_DISABLED"}), 503
     preferences = quick_buy.save_preferences(
         _quick_buy_identity(), request.get_json(silent=True) or {}
+    )
+
+
+@app.get("/projet")
+def project_showcase():
+    """Présentation publique, sobre et vérifiable pour jurys et partenaires."""
+    sites, marketplaces = _app_metadata()
+    return render_template(
+        "project.html",
+        catalog_site_count=len(sites),
+        connector_count=len(marketplaces),
+        app_version=APP_VERSION,
+        csp_nonce=g.csp_nonce,
     )
     return jsonify({"ok": True, "preferences": preferences})
 

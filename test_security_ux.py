@@ -72,7 +72,13 @@ def main():
     assert robots.status_code == 200 and "Disallow: /api/" in robots.get_data(as_text=True)
     assert "Sitemap: http://localhost/sitemap.xml" in robots.get_data(as_text=True)
     assert sitemap.status_code == 200 and "<loc>http://localhost/</loc>" in sitemap.get_data(as_text=True)
+    assert "<loc>http://localhost/projet</loc>" in sitemap.get_data(as_text=True)
     assert "<loc>http://localhost/confiance</loc>" in sitemap.get_data(as_text=True)
+    project = client.get("/projet")
+    assert project.status_code == 200
+    project_text = project.get_data(as_text=True)
+    assert "Trouver la bonne annonce" in project_text
+    assert "Aucun achat automatique" in project_text
     trust_fr = client.get("/confiance")
     trust_en = client.get("/confiance?lang=en")
     trust_css = client.get("/static/trust.css?v=20260814-3")
